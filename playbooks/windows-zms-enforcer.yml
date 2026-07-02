@@ -29,9 +29,9 @@
     msi_log: '{{ zms_temp_dir }}\msiexec.log'
 
     # ZMS provisioning nonce = the 'provision_key' field of the single
-    # consolidated secret (group_vars/all.yml -> ansible_credentials). Set it via
-    # terraform.tfvars (var.provision_key).
-    zms_nonce: "{{ ansible_credentials.provision_key | trim }}"
+    # consolidated secret, resolved field-scoped inline (see group_vars/all.yml
+    # note). Set it via terraform.tfvars (var.provision_key).
+    zms_nonce: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).provision_key | trim }}"
 
     zms_download_retries: 3
     zms_download_delay: 5
@@ -51,7 +51,7 @@
       ansible.builtin.assert:
         that:
           - zms_nonce | length > 0
-        fail_msg: "ZMS nonce could not be retrieved from Secrets Manager ({{ zms_nonce_secret_id }})."
+        fail_msg: "ZMS nonce (provision_key) could not be retrieved from Secrets Manager secret '{{ ansible_secret_name }}'."
       no_log: true
 
     - name: Ensure the staging directory exists

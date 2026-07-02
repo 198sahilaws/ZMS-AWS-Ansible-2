@@ -5,11 +5,11 @@ ansible_become: true
 ansible_become_method: sudo
 
 # The login user must be known BEFORE Ansible connects (pre-facts), so it cannot
-# be auto-detected. Default to ubuntu; override per group/host for mixed AMIs:
-#   - ec2-user   (Amazon Linux / RHEL)
-#   - rocky      (Rocky Linux)
-# Best practice: set linux_login_user in a host_vars file, an env_*.yml /
-# role_*.yml group_vars file, or add a distro tag + keyed_group in the inventory.
+# be auto-detected. This is the FALLBACK for any Linux host lacking a Distro tag;
+# group_vars/distro_amazon.yml and distro_ubuntu.yml (higher ansible_group_priority)
+# set the correct user per distro:
+#   - ec2-user   (Amazon Linux / RHEL)  -> distro_amazon
+#   - ubuntu     (Ubuntu)               -> distro_ubuntu
 linux_login_user: ubuntu
 ansible_user: "{{ linux_login_user }}"
 

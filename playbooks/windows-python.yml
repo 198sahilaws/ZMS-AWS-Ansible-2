@@ -1,5 +1,5 @@
 ---
-# Install Python on Windows using the internal Chocolatey source.
+# Install Python on Windows from the public Chocolatey community feed.
 #
 #   ansible-playbook playbooks/windows-python.yml
 #   ansible-playbook playbooks/windows-python.yml --limit win-app01
@@ -12,17 +12,10 @@
     python_package: python3
     python_version: ""        # leave empty for latest; pin e.g. 3.12.4
   tasks:
-    - name: Ensure the internal Chocolatey source exists
-      chocolatey.chocolatey.win_chocolatey_source:
-        name: internal
-        source: "{{ repo_base_url }}/choco"
-        state: present
-
-    - name: Install Python from the internal source
+    - name: Install Python from the public Chocolatey community feed
       chocolatey.chocolatey.win_chocolatey:
         name: "{{ python_package }}"
         version: "{{ python_version | default(omit, true) }}"
-        source: internal
         state: present
 
     - name: Verify Python is on PATH

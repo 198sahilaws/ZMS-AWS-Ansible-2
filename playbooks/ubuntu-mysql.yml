@@ -12,13 +12,13 @@
 # also switches root to mysql_native_password so the password actually works.
 
 - name: Install and enable MySQL
-  hosts: "{{ target | default('os_linux') }}"
+  hosts: "{{ target | default('distro_ubuntu') }}"
   gather_facts: true
   vars:
-    # Root password from the single consolidated secret (group_vars/all.yml ->
-    # ansible_credentials). Empty (default) skips the root-password step; set
-    # var.mysql_root_password in terraform.tfvars to enable it.
-    mysql_root_password: "{{ ansible_credentials.mysql_root_password | default('', true) }}"
+    # Root password from the single consolidated secret, resolved field-scoped
+    # inline (see group_vars/all.yml note). Empty (default) skips the root-password
+    # step; set var.mysql_root_password in terraform.tfvars to enable it.
+    mysql_root_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).mysql_root_password | default('', true) }}"
   tasks:
     - name: Skip non-Debian hosts
       ansible.builtin.meta: end_host

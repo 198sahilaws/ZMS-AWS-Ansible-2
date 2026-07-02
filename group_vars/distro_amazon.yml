@@ -1,0 +1,10 @@
+---
+# Login user for Amazon Linux hosts (inventory group distro_amazon, keyed off
+# the Distro tag Terraform sets). Amazon Linux 2023 has no 'ubuntu' account, so
+# this MUST override the os_linux.yml default.
+#
+# ansible_group_priority raises this group above os_linux (default priority 1):
+# without it, group_vars merge alphabetically and 'os_linux' (o) would load after
+# 'distro_amazon' (d) and clobber linux_login_user back to ubuntu.
+ansible_group_priority: 10
+linux_login_user: ec2-user

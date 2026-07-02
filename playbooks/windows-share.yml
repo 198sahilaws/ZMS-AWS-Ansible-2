@@ -1,9 +1,13 @@
 ---
 # Create an SMB network share on Windows file servers.
-# Default access model: Everyone read-only (both share-level and NTFS).
+# Access is granted to share_read_principal (both share-level and NTFS read-only).
+# Default is the built-in "Authenticated Users" — every domain/local account that
+# has logged on, but NOT anonymous/guest (unlike "Everyone"). Override with a
+# specific AD group for least privilege, e.g. -e 'share_read_principal=ALCOR\Share-RO'.
 #
 #   ansible-playbook playbooks/windows-share.yml
 #   ansible-playbook playbooks/windows-share.yml -e share_name=software -e 'share_path=D:\Shares\software'
+#   ansible-playbook playbooks/windows-share.yml -e 'share_read_principal=ALCOR\FileShare-Readers'
 #   ansible-playbook playbooks/windows-share.yml --limit win-fs01
 
 - name: Create a read-only network share
@@ -13,26 +17,28 @@
     share_name: data
     share_path: 'C:\Shares\{{ share_name }}'
     share_description: Read-only file share managed by Ansible
+    # Who gets read access. Prefer a scoped AD group over broad built-ins.
+    share_read_principal: Authenticated Users
   tasks:
     - name: Ensure the share directory exists
       ansible.windows.win_file:
         path: "{{ share_path }}"
         state: directory
 
-    - name: Grant Everyone NTFS read on the folder
+    - name: Grant NTFS read to {{ share_read_principal }} on the folder
       ansible.windows.win_acl:
         path: "{{ share_path }}"
-        user: Everyone
+        user: "{{ share_read_principal }}"
         rights: ReadAndExecute
         type: allow
         state: present
         inherit: ContainerInherit, ObjectInherit
         propagation: None
 
-    - name: Create/Update the SMB share (Everyone read-only)
+    - name: Create/Update the SMB share ({{ share_read_principal }} read-only)
       ansible.windows.win_share:
         name: "{{ share_name }}"
         path: "{{ share_path }}"
         description: "{{ share_description }}"
-        read: Everyone
+        read: "{{ share_read_principal }}"
         state: present

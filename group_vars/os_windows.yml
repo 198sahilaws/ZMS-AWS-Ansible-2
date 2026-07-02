@@ -9,8 +9,9 @@ ansible_winrm_transport: ntlm     # 'kerberos' if domain-joined; see §6
 ansible_winrm_server_cert_validation: ignore
 ansible_winrm_message_encryption: auto           # encrypt payload over NTLM/HTTP
 
-# Credentials come from the single consolidated secret resolved in
-# group_vars/all.yml (ansible_credentials). Nothing sensitive is stored in Git;
-# ansible_password is automatically scrubbed from Ansible output/logs.
-ansible_user: "{{ ansible_credentials.winrm_username }}"
-ansible_password: "{{ ansible_credentials.winrm_password }}"
+# Credentials come from the single consolidated secret, resolved field-scoped and
+# inline (not via a global bundle var — see the note in group_vars/all.yml).
+# Nothing sensitive is stored in Git; ansible_password is automatically scrubbed
+# from Ansible output/logs.
+ansible_user: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).winrm_username }}"
+ansible_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).winrm_password }}"

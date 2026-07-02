@@ -122,9 +122,10 @@ Rolling, fail-fast converge:
 ansible-playbook site.yml -e rolling_batch=25% -e max_fail_pct=10
 ```
 
-> The internal apt/yum repos are GPG-verified: place the signing keys at
-> `{{ repo_base_url }}/keys/internal-archive-keyring.gpg` (Debian) and
-> `{{ repo_base_url }}/keys/RPM-GPG-KEY-internal` (RHEL). Avoid `[trusted=yes]`.
+> Packages install from the distro's built-in apt/dnf repos and Chocolatey's
+> public community feed over the instances' NAT HTTPS egress — no internal
+> mirror is required. To pin hosts to an internal mirror instead, add the repo
+> config back to `site.yml` and point it at your GPG-verified server.
 
 ## Development / linting
 

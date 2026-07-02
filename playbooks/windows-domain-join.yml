@@ -22,10 +22,10 @@
     # Optional: place the computer object in a specific OU, e.g.
     #   ou_path: "OU=Servers,DC=alcor,DC=co,DC=in"
     ou_path: ""
-    # Domain-join account from the single consolidated secret
-    # (group_vars/all.yml -> ansible_credentials).
-    domain_admin_user: "{{ ansible_credentials.domain_join_username }}"
-    domain_admin_password: "{{ ansible_credentials.domain_join_password }}"
+    # Domain-join account from the single consolidated secret, resolved
+    # field-scoped inline (see group_vars/all.yml note).
+    domain_admin_user: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).domain_join_username }}"
+    domain_admin_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).domain_join_password }}"
   tasks:
     - name: Assert domain-join credentials are present in the consolidated secret
       ansible.builtin.assert:

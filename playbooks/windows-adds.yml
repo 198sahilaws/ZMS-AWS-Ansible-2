@@ -16,9 +16,9 @@
   vars:
     ad_domain_name: alcor.co.in
     ad_domain_netbios: ALCOR
-    # DSRM / safe-mode password from the single consolidated secret
-    # (group_vars/all.yml -> ansible_credentials), key: dsrm_password.
-    dsrm_password: "{{ ansible_credentials.dsrm_password }}"
+    # DSRM / safe-mode password from the single consolidated secret, key
+    # dsrm_password. Resolved field-scoped inline (see group_vars/all.yml note).
+    dsrm_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).dsrm_password }}"
   tasks:
     - name: Assert the DSRM password is present in the consolidated secret
       ansible.builtin.assert:

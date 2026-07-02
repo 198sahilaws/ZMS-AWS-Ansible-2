@@ -9,17 +9,17 @@
 # required — keeping hardened, egress-restricted hosts on the internal supply
 # chain and avoiding the temp-root-password dance MySQL Community imposes.
 #
-# If you specifically need Oracle MySQL, add its Community repo from an INTERNAL
-# mirror (repo_base_url) rather than dev.mysql.com, then install
-# mysql-community-server (service 'mysqld') and adjust the socket path below.
+# If you specifically need Oracle MySQL, add its Community repo (ideally from an
+# internal mirror rather than dev.mysql.com), then install mysql-community-server
+# (service 'mysqld') and adjust the socket path below.
 
 - name: Install and enable MariaDB (MySQL-compatible)
-  hosts: "{{ target | default('os_linux') }}"
+  hosts: "{{ target | default('distro_amazon') }}"
   gather_facts: true
   vars:
-    # Root password from the single consolidated secret (group_vars/all.yml ->
-    # ansible_credentials). Empty (default) skips the root-password step.
-    mysql_root_password: "{{ ansible_credentials.mysql_root_password | default('', true) }}"
+    # Root password from the single consolidated secret, resolved field-scoped
+    # inline (see group_vars/all.yml note). Empty (default) skips the step.
+    mysql_root_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).mysql_root_password | default('', true) }}"
   tasks:
     - name: Skip non-RedHat-family hosts
       ansible.builtin.meta: end_host

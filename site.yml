@@ -48,37 +48,8 @@
     - role: baseline
       tags: [baseline]
   tasks:
-    - name: Configure the internal apt repo (Debian family)
-      when: ansible_os_family == "Debian"
-      tags: [packages]
-      block:
-        - name: Install the internal repository signing key
-          ansible.builtin.get_url:
-            url: "{{ repo_base_url }}/keys/internal-archive-keyring.gpg"
-            dest: /usr/share/keyrings/internal-archive-keyring.gpg
-            mode: "0644"
-            owner: root
-            group: root
-        - name: Point at the internal apt repo (GPG-verified)
-          ansible.builtin.apt_repository:
-            repo: >-
-              deb [signed-by=/usr/share/keyrings/internal-archive-keyring.gpg]
-              {{ repo_base_url }}/deb stable main
-            filename: internal
-            state: present
-            update_cache: true
-
-    - name: Configure the internal yum repo (RHEL family)
-      when: ansible_os_family == "RedHat"
-      tags: [packages]
-      ansible.builtin.yum_repository:
-        name: internal
-        description: Internal repository
-        baseurl: "{{ repo_base_url }}/rpm"
-        gpgcheck: true
-        gpgkey: "{{ repo_base_url }}/keys/RPM-GPG-KEY-internal"
-        enabled: true
-
+    # Packages install from the distro's built-in apt/dnf repos over the NAT
+    # HTTPS egress — no internal mirror required.
     - name: Install baseline package
       ansible.builtin.package:
         name: "{{ linux_baseline_package | default('htop') }}"
@@ -94,14 +65,10 @@
     - role: baseline
       tags: [baseline]
   tasks:
-    - name: Configure internal Chocolatey source
-      chocolatey.chocolatey.win_chocolatey_source:
-        name: internal
-        source: "{{ repo_base_url }}/choco"
-        state: present
-      tags: [packages]
-
-    - name: Install a signed package
+    # Chocolatey installs from its default public community feed
+    # (https://community.chocolatey.org/api/v2/), configured when choco is
+    # installed — no internal source required.
+    - name: Install a package from the public Chocolatey community feed
       chocolatey.chocolatey.win_chocolatey:
         name: "{{ windows_baseline_package | default('7zip') }}"
         state: present

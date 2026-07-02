@@ -11,7 +11,7 @@
 #   ansible-playbook playbooks/ubuntu-setup.yml -e '{"ubuntu_packages":["curl","wget","git"]}'
 
 - name: Update and provision Ubuntu servers
-  hosts: "{{ target | default('os_linux') }}"
+  hosts: "{{ target | default('distro_ubuntu') }}"
   gather_facts: true
   serial: "{{ rolling_batch | default('100%') }}"
   max_fail_percentage: "{{ max_fail_pct | default(0) }}"

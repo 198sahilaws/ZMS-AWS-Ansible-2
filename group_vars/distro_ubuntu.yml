@@ -1,0 +1,7 @@
+---
+# Login user for Ubuntu hosts (inventory group distro_ubuntu, keyed off the
+# Distro tag Terraform sets). Same value as the os_linux.yml default, but set
+# here explicitly so the Distro group is the single source of truth for the
+# login user across a mixed estate.
+ansible_group_priority: 10
+linux_login_user: ubuntu

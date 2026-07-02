@@ -5,7 +5,7 @@
 #   ansible-playbook playbooks/ubuntu-apache2.yml -e target=role_web
 
 - name: Install and enable Apache2
-  hosts: "{{ target | default('os_linux') }}"
+  hosts: "{{ target | default('distro_ubuntu') }}"
   gather_facts: true
   tasks:
     - name: Skip non-Debian hosts

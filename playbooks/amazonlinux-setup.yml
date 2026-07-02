@@ -11,7 +11,7 @@
 #   ansible-playbook playbooks/amazonlinux-setup.yml -e '{"amazonlinux_packages":["curl","wget","git"]}'
 
 - name: Update and provision Amazon Linux servers
-  hosts: "{{ target | default('os_linux') }}"
+  hosts: "{{ target | default('distro_amazon') }}"
   gather_facts: true
   serial: "{{ rolling_batch | default('100%') }}"
   max_fail_percentage: "{{ max_fail_pct | default(0) }}"

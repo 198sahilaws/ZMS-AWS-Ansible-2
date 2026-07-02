@@ -10,6 +10,10 @@
   become: true
   vars:
     ansible_key_dir: /etc/ansible/keys
+    # The systemd timers (ansible-bootstrap/ansible-estate) run ansible-playbook
+    # as this account, so it is the user that invokes ssh and must OWN and READ
+    # the private key. Root-owned 0600 would be unreadable by the ssh client.
+    ansible_service_user: ubuntu
   tasks:
     - name: Assert the consolidated secret name was provided
       ansible.builtin.assert:
@@ -23,8 +27,8 @@
       ansible.builtin.file:
         path: "{{ ansible_key_dir }}"
         state: directory
-        owner: root
-        group: root
+        owner: "{{ ansible_service_user }}"
+        group: "{{ ansible_service_user }}"
         mode: "0700"
 
     - name: Install required collections
@@ -40,10 +44,10 @@
 
     - name: Write the Ansible SSH private key from the consolidated secret
       ansible.builtin.copy:
-        content: "{{ ansible_credentials.ssh_private_key }}"
+        content: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).ssh_private_key }}"
         dest: "{{ ansible_ssh_private_key_file }}"
-        owner: root
-        group: root
+        owner: "{{ ansible_service_user }}"
+        group: "{{ ansible_service_user }}"
         mode: "0600"
       no_log: true
 

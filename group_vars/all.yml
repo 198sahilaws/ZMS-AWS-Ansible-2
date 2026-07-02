@@ -14,7 +14,8 @@ aws_region: "{{ lookup('ansible.builtin.env', 'AWS_REGION') | default('eu-west-3
 # --- Consolidated Ansible credentials secret ------------------------------
 # Terraform (module.secrets) creates ONE secret per deployment, named
 # <base>/ansible-credentials-<suffix>, holding a single JSON document:
-#   { "ssh_private_key": "<PEM>", "winrm_username": "...", "winrm_password": "..." }
+#   { "ssh_private_key": "<PEM>", "winrm_username": "...", "winrm_password": "...",
+#     "dsrm_password": "...", "domain_join_username": "...", ... }
 #
 # The dynamic name is handed to the control node by its cloud-init as the
 # ANSIBLE_SECRET_NAME environment variable (Terraform and Ansible run on
@@ -23,10 +24,11 @@ aws_region: "{{ lookup('ansible.builtin.env', 'AWS_REGION') | default('eu-west-3
 # the vars file) overrides the env-var line below if present.
 ansible_secret_name: "{{ lookup('ansible.builtin.env', 'ANSIBLE_SECRET_NAME') | default('', true) }}"
 
-# Resolve the secret ONCE; os_windows.yml and bootstrap.yml read fields off this.
-# Evaluated lazily (only when referenced), so Linux-only runs never call it.
-ansible_credentials: "{{ lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json }}"
-
-# Internal repository server reachable from the VPC. Roles/plays reference these
-# instead of public mirrors so hardened hosts stay on the internal supply chain.
-repo_base_url: http://repo.internal.example.com
+# NOTE: the decrypted secret is deliberately NOT bound to a global variable here.
+# A single broadly-scoped `ansible_credentials` dict would put the SSH private key
+# and every password in scope for every play (and one stray `debug: var=...` or
+# `-vvv` dump would leak all of them). Instead each play resolves ONLY the field
+# it needs, inline and at the point of use, e.g.:
+#   "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region)
+#        | from_json).winrm_password }}"
+# See group_vars/os_windows.yml and the playbooks/*.yml vars blocks.

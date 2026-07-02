@@ -19,10 +19,16 @@ hostnames:
   - private-ip-address
 compose:
   ansible_host: private_ip_address
-# Build groups from tags: creates groups like 'os_linux', 'role_web', 'env_prod'
+# Build groups from tags: creates groups like 'os_linux', 'distro_amazon',
+# 'role_web', 'env_prod'.
 keyed_groups:
   - key: tags.OS
     prefix: os
+    separator: "_"
+  # Distro (amazon/ubuntu) drives the Linux SSH login user via group_vars/
+  # distro_*.yml — Amazon Linux logs in as ec2-user, Ubuntu as ubuntu.
+  - key: tags.Distro
+    prefix: distro
     separator: "_"
   - key: tags.Role
     prefix: role
