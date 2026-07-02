@@ -1,0 +1,35 @@
+---
+# Install Python on Windows using the internal Chocolatey source.
+#
+#   ansible-playbook playbooks/windows-python.yml
+#   ansible-playbook playbooks/windows-python.yml --limit win-app01
+#   ansible-playbook playbooks/windows-python.yml -e python_version=3.12.4
+
+- name: Install Python on Windows
+  hosts: "{{ target | default('os_windows') }}"
+  gather_facts: false
+  vars:
+    python_package: python3
+    python_version: ""        # leave empty for latest; pin e.g. 3.12.4
+  tasks:
+    - name: Ensure the internal Chocolatey source exists
+      chocolatey.chocolatey.win_chocolatey_source:
+        name: internal
+        source: "{{ repo_base_url }}/choco"
+        state: present
+
+    - name: Install Python from the internal source
+      chocolatey.chocolatey.win_chocolatey:
+        name: "{{ python_package }}"
+        version: "{{ python_version | default(omit, true) }}"
+        source: internal
+        state: present
+
+    - name: Verify Python is on PATH
+      ansible.windows.win_command: python --version
+      register: py_ver
+      changed_when: false
+
+    - name: Show the installed Python version
+      ansible.builtin.debug:
+        var: py_ver.stdout

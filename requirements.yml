@@ -1,0 +1,23 @@
+---
+# Collections required on the control node.
+# Install with: ansible-galaxy collection install -r requirements.yml
+#
+# Versions are capped below the next major to prevent surprise breaking changes
+# on reconverge. To fully freeze for reproducible builds, run
+#   ansible-galaxy collection list
+# and replace the ranges with the exact versions you validated.
+collections:
+  - name: amazon.aws            # aws_ec2 inventory + aws_secret lookup
+    version: ">=6.0.0,<11.0.0"
+  - name: ansible.windows       # win_* core modules
+    version: ">=2.0.0,<4.0.0"
+  - name: microsoft.ad          # AD DS forest/domain promotion (windows-adds)
+    version: ">=1.0.0,<2.0.0"
+  - name: community.windows     # extended Windows modules
+    version: ">=2.0.0,<4.0.0"
+  - name: chocolatey.chocolatey
+    version: ">=1.4.0,<2.0.0"
+  - name: community.general
+    version: ">=7.0.0,<12.0.0"
+  - name: community.mysql      # MySQL modules (ubuntu-mysql)
+    version: ">=3.0.0,<4.0.0"

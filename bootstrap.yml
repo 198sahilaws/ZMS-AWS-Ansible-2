@@ -1,0 +1,50 @@
+---
+# The control node configuring itself (localhost). Triggered by the cloud-init
+# reconverge hook / systemd timer from Document 1. Keeps the control node's own
+# Ansible install, collections, and SSH key material current.
+
+- name: Bootstrap the Ansible control node
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  become: true
+  vars:
+    ansible_key_dir: /etc/ansible/keys
+  tasks:
+    - name: Assert the consolidated secret name was provided
+      ansible.builtin.assert:
+        that:
+          - ansible_secret_name | length > 0
+        fail_msg: >-
+          ANSIBLE_SECRET_NAME is not set. The control node's cloud-init
+          (Terraform module.secrets) must inject the consolidated secret name.
+
+    - name: Ensure the Ansible key directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_key_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Install required collections
+      community.general.ansible_galaxy_install:
+        type: collection
+        requirements_file: "{{ playbook_dir }}/requirements.yml"
+      become: false
+
+    - name: Write the Ansible SSH private key from the consolidated secret
+      ansible.builtin.copy:
+        content: "{{ ansible_credentials.ssh_private_key }}"
+        dest: "{{ ansible_key_dir }}/ansible_ed25519"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Confirm the dynamic inventory resolves
+      ansible.builtin.command: ansible-inventory -i inventory/aws_ec2.yml --graph
+      args:
+        chdir: "{{ playbook_dir }}"
+      changed_when: false
+      become: false

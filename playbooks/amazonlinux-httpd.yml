@@ -1,0 +1,26 @@
+---
+# Install Apache HTTP Server and run it as a service on SELECTED Amazon Linux
+# servers. On Amazon Linux the Apache package/service is named 'httpd'
+# (the Debian/Ubuntu name 'apache2' does not apply here).
+#
+#   ansible-playbook playbooks/amazonlinux-httpd.yml --limit web01,web02
+#   ansible-playbook playbooks/amazonlinux-httpd.yml -e target=role_web
+
+- name: Install and enable Apache (httpd)
+  hosts: "{{ target | default('os_linux') }}"
+  gather_facts: true
+  tasks:
+    - name: Skip non-RedHat-family hosts
+      ansible.builtin.meta: end_host
+      when: ansible_os_family != "RedHat"
+
+    - name: Install Apache (httpd)
+      ansible.builtin.dnf:
+        name: httpd
+        state: present
+
+    - name: Ensure httpd is started and enabled at boot
+      ansible.builtin.service:
+        name: httpd
+        state: started
+        enabled: true

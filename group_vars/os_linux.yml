@@ -1,0 +1,23 @@
+---
+# Connection settings for the Linux estate (group 'os_linux', keyed off tag OS).
+ansible_connection: ssh
+ansible_become: true
+ansible_become_method: sudo
+
+# The login user must be known BEFORE Ansible connects (pre-facts), so it cannot
+# be auto-detected. Default to ubuntu; override per group/host for mixed AMIs:
+#   - ec2-user   (Amazon Linux / RHEL)
+#   - rocky      (Rocky Linux)
+# Best practice: set linux_login_user in a host_vars file, an env_*.yml /
+# role_*.yml group_vars file, or add a distro tag + keyed_group in the inventory.
+linux_login_user: ubuntu
+ansible_user: "{{ linux_login_user }}"
+
+# --- Private subnets / bastion (optional) ---------------------------------
+# If the control node cannot route directly to managed hosts, tunnel SSH
+# through a bastion by uncommenting the following and setting bastion_host.
+# In the Document 1 topology (control node inside the VPC, 'managed' SG
+# allowing its SG) this is NOT needed — direct private addressing works.
+#
+# ansible_ssh_common_args: >-
+#   -o ProxyCommand="ssh -W %h:%p -q ubuntu@{{ bastion_host }}"

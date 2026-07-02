@@ -1,0 +1,13 @@
+[Unit]
+Description=Ansible control-node self-converge (reconverge.sh -> bootstrap.yml)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/control-repo
+EnvironmentFile=/etc/ansible/estate.env
+ExecStart=/opt/control-repo/scripts/reconverge.sh
+# Record result to /var/log/ansible and alert on failure.
+ExecStopPost=/opt/control-repo/scripts/notify-result.sh bootstrap

@@ -1,0 +1,17 @@
+---
+# Minimal, idempotent Linux baseline.
+- name: Ensure a consistent timezone
+  community.general.timezone:
+    name: "{{ baseline_timezone }}"
+
+- name: Ensure baseline packages are present
+  ansible.builtin.package:
+    name: "{{ baseline_linux_packages }}"
+    state: present
+
+- name: Ensure chrony (time sync) is enabled and running
+  ansible.builtin.service:
+    name: "{{ baseline_chrony_service }}"
+    state: started
+    enabled: true
+  when: baseline_manage_timesync | bool

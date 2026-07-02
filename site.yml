@@ -1,0 +1,108 @@
+---
+# Push playbook for the estate. Two OS-scoped plays selected by the dynamic
+# groups built from the OS tag. Run with:
+#   ansible-playbook site.yml --check --diff      # dry run (report drift)
+#   ansible-playbook site.yml                     # full converge
+#   ansible-playbook site.yml --limit 'os_linux:&env_prod'
+#   ansible-playbook site.yml --tags packages --limit os_windows
+#
+# Blast-radius control (override at run time):
+#   ansible-playbook site.yml -e rolling_batch=25% -e max_fail_pct=10
+
+- name: Pre-flight checks (control node)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [always]
+  tasks:
+    - name: Assert region and the consolidated secret name are configured
+      ansible.builtin.assert:
+        that:
+          - aws_region | length > 0
+          - ansible_secret_name | length > 0
+        fail_msg: >-
+          AWS_REGION and ANSIBLE_SECRET_NAME must be present in the environment
+          (injected by the control node's cloud-init). Got aws_region=
+          '{{ aws_region }}', ansible_secret_name set={{ (ansible_secret_name | length > 0) }}.
+        success_msg: Pre-flight OK — region and consolidated secret configured.
+
+    - name: Assert the dynamic inventory discovered managed hosts
+      ansible.builtin.assert:
+        that:
+          - (groups['os_linux'] | default([]) | length) + (groups['os_windows'] | default([]) | length) > 0
+        fail_msg: >-
+          No managed hosts discovered by the aws_ec2 inventory. Check that
+          AWS_REGION ('{{ aws_region }}') is the region the instances run in, and
+          that the `tag:ManagedBy` value in inventory/aws_ec2.yml matches the
+          instances (Terraform tags them ManagedBy=Terraform, capital T).
+        success_msg: >-
+          Discovered {{ (groups['os_linux'] | default([]) | length)
+          + (groups['os_windows'] | default([]) | length) }} managed host(s).
+
+- name: Linux estate
+  hosts: os_linux
+  gather_facts: true
+  serial: "{{ rolling_batch | default('100%') }}"
+  max_fail_percentage: "{{ max_fail_pct | default(0) }}"
+  roles:
+    - role: baseline
+      tags: [baseline]
+  tasks:
+    - name: Configure the internal apt repo (Debian family)
+      when: ansible_os_family == "Debian"
+      tags: [packages]
+      block:
+        - name: Install the internal repository signing key
+          ansible.builtin.get_url:
+            url: "{{ repo_base_url }}/keys/internal-archive-keyring.gpg"
+            dest: /usr/share/keyrings/internal-archive-keyring.gpg
+            mode: "0644"
+            owner: root
+            group: root
+        - name: Point at the internal apt repo (GPG-verified)
+          ansible.builtin.apt_repository:
+            repo: >-
+              deb [signed-by=/usr/share/keyrings/internal-archive-keyring.gpg]
+              {{ repo_base_url }}/deb stable main
+            filename: internal
+            state: present
+            update_cache: true
+
+    - name: Configure the internal yum repo (RHEL family)
+      when: ansible_os_family == "RedHat"
+      tags: [packages]
+      ansible.builtin.yum_repository:
+        name: internal
+        description: Internal repository
+        baseurl: "{{ repo_base_url }}/rpm"
+        gpgcheck: true
+        gpgkey: "{{ repo_base_url }}/keys/RPM-GPG-KEY-internal"
+        enabled: true
+
+    - name: Install baseline package
+      ansible.builtin.package:
+        name: "{{ linux_baseline_package | default('htop') }}"
+        state: present
+      tags: [packages]
+
+- name: Windows estate
+  hosts: os_windows
+  gather_facts: true
+  serial: "{{ rolling_batch | default('100%') }}"
+  max_fail_percentage: "{{ max_fail_pct | default(0) }}"
+  roles:
+    - role: baseline
+      tags: [baseline]
+  tasks:
+    - name: Configure internal Chocolatey source
+      chocolatey.chocolatey.win_chocolatey_source:
+        name: internal
+        source: "{{ repo_base_url }}/choco"
+        state: present
+      tags: [packages]
+
+    - name: Install a signed package
+      chocolatey.chocolatey.win_chocolatey:
+        name: "{{ windows_baseline_package | default('7zip') }}"
+        state: present
+      tags: [packages]

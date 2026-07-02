@@ -1,0 +1,60 @@
+---
+# Promote a Windows Server to the FIRST domain controller of a NEW forest.
+# Root domain: alcor.co.in
+#
+#   ansible-playbook playbooks/windows-adds.yml
+#   ansible-playbook playbooks/windows-adds.yml --limit win-dc01
+#   ansible-playbook playbooks/windows-adds.yml -e target=role_dc
+#
+# The DSRM (Directory Services Restore Mode / "safe mode") password is fetched
+# from AWS Secrets Manager at run time — never stored in Git. The module marks
+# safe_mode_password as no_log automatically.
+
+- name: Build new AD forest (alcor.co.in)
+  hosts: "{{ target | default('role_dc') }}"
+  gather_facts: true
+  vars:
+    ad_domain_name: alcor.co.in
+    ad_domain_netbios: ALCOR
+    # DSRM / safe-mode password from the single consolidated secret
+    # (group_vars/all.yml -> ansible_credentials), key: dsrm_password.
+    dsrm_password: "{{ ansible_credentials.dsrm_password }}"
+  tasks:
+    - name: Assert the DSRM password is present in the consolidated secret
+      ansible.builtin.assert:
+        that:
+          - dsrm_password | length > 0
+        fail_msg: >-
+          dsrm_password is empty. Set var.dsrm_password in terraform.tfvars so it
+          is written to the consolidated secret before promoting the forest.
+      no_log: true
+
+    - name: Install AD DS role and management tools
+      ansible.windows.win_feature:
+        name: AD-Domain-Services
+        include_management_tools: true
+        state: present
+      register: ad_feature
+
+    - name: Reboot if the feature install requires it
+      ansible.windows.win_reboot:
+      when: ad_feature.reboot_required
+
+    - name: Promote host to first DC of new forest {{ ad_domain_name }}
+      microsoft.ad.domain:
+        dns_domain_name: "{{ ad_domain_name }}"
+        domain_netbios_name: "{{ ad_domain_netbios }}"
+        safe_mode_password: "{{ dsrm_password }}"
+        install_dns: true
+        reboot: true          # module manages the post-promotion reboot
+      register: forest
+
+    - name: Wait for AD Web Services to come up (DC is ready)
+      ansible.windows.win_service:
+        name: ADWS
+        state: started
+        start_mode: auto
+      register: adws
+      until: adws is succeeded
+      retries: 30
+      delay: 20

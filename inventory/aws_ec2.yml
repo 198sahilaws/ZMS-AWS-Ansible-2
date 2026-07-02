@@ -1,0 +1,30 @@
+---
+# EC2 dynamic inventory.
+# Discovers instances via the EC2-describe IAM rights granted in Document 1 and
+# groups them by the standard Role / OS / Environment tags. The OS tag drives the
+# Linux/Windows split that selects the connection plugin.
+plugin: amazon.aws.aws_ec2
+# Region: single source of truth via the AWS_REGION env var (shared with the
+# playbooks and reconverge.sh); falls back to eu-west-3 if unset. The aws_ec2
+# plugin templates option values, so this lookup resolves at inventory parse time.
+# If you prefer not to rely on templating, delete the `regions` block entirely
+# and boto3 will use AWS_REGION / AWS_DEFAULT_REGION from the environment.
+regions:
+  - "{{ lookup('ansible.builtin.env', 'AWS_REGION') | default('eu-west-3', true) }}"
+filters:
+  instance-state-name: running
+  tag:ManagedBy: Terraform          # only managed instances
+# Prefer private IP — the control node sits inside the VPC.
+hostnames:
+  - private-ip-address
+compose:
+  ansible_host: private_ip_address
+# Build groups from tags: creates groups like 'os_linux', 'role_web', 'env_prod'
+keyed_groups:
+  - key: tags.OS
+    prefix: os
+    separator: "_"
+  - key: tags.Role
+    prefix: role
+  - key: tags.Environment
+    prefix: env

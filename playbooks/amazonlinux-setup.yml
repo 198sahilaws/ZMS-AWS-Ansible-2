@@ -1,0 +1,62 @@
+---
+# Combined Amazon Linux setup: full package update + install common packages.
+# Condenses amazonlinux-update-packages, amazonlinux-install-netcat and
+# amazonlinux-install-packages into one playbook. Use tags to run a subset:
+#
+#   ansible-playbook playbooks/amazonlinux-setup.yml                  # update + packages
+#   ansible-playbook playbooks/amazonlinux-setup.yml --tags update    # upgrade only
+#   ansible-playbook playbooks/amazonlinux-setup.yml --tags packages  # install only
+#   ansible-playbook playbooks/amazonlinux-setup.yml --check --diff
+#   ansible-playbook playbooks/amazonlinux-setup.yml -e rolling_batch=25%
+#   ansible-playbook playbooks/amazonlinux-setup.yml -e '{"amazonlinux_packages":["curl","wget","git"]}'
+
+- name: Update and provision Amazon Linux servers
+  hosts: "{{ target | default('os_linux') }}"
+  gather_facts: true
+  serial: "{{ rolling_batch | default('100%') }}"
+  max_fail_percentage: "{{ max_fail_pct | default(0) }}"
+  vars:
+    amazonlinux_packages:
+      - nmap-ncat
+      - curl
+      - wget
+  tasks:
+    - name: Skip non-RedHat-family hosts
+      ansible.builtin.meta: end_host
+      when: ansible_os_family != "RedHat"
+
+    # --- Full package update -------------------------------------------------
+    - name: Upgrade all packages
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_cache: true
+      tags: [update]
+
+    - name: Ensure needs-restarting is available
+      ansible.builtin.dnf:
+        name: dnf-utils
+        state: present
+      tags: [update]
+
+    - name: Check whether a reboot is required
+      ansible.builtin.command: needs-restarting -r
+      register: needs_restart
+      changed_when: false
+      failed_when: false
+      tags: [update]
+
+    - name: Reboot if the upgrade requires it
+      ansible.builtin.reboot:
+        msg: Rebooting after package upgrade (managed by Ansible)
+        reboot_timeout: 600
+      when: needs_restart.rc == 1
+      tags: [update]
+
+    # --- Install common packages (netcat, curl, wget, ...) -------------------
+    - name: Install common packages
+      ansible.builtin.dnf:
+        name: "{{ amazonlinux_packages }}"
+        state: present
+        update_cache: true
+      tags: [packages]

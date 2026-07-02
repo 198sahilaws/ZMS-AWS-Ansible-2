@@ -1,0 +1,14 @@
+[Unit]
+Description=Ansible estate converge (site.yml)
+Wants=network-online.target
+After=network-online.target ansible-bootstrap.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/control-repo
+EnvironmentFile=/etc/ansible/estate.env
+# Rolling batches to limit blast radius; drop the -e flags for all-at-once.
+ExecStart=/usr/bin/ansible-playbook site.yml -e rolling_batch=25% -e max_fail_pct=20
+# Record result to /var/log/ansible and alert on failure.
+ExecStopPost=/opt/control-repo/scripts/notify-result.sh estate

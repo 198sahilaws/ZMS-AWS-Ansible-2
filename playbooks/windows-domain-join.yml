@@ -1,0 +1,63 @@
+---
+# Join Windows machines to the AD domain alcor.co.in.
+#
+#   ansible-playbook playbooks/windows-domain-join.yml                 # all os_windows (except DCs)
+#   ansible-playbook playbooks/windows-domain-join.yml --limit win-app01
+#   ansible-playbook playbooks/windows-domain-join.yml -e target=role_web
+#   ansible-playbook playbooks/windows-domain-join.yml -e domain_dns_server=10.0.0.10
+#
+# Join credentials come from the single consolidated secret (resolved in
+# group_vars/all.yml as ansible_credentials), keys domain_join_username /
+# domain_join_password — an account with rights to add computers to the domain.
+# Set them via terraform.tfvars (var.domain_join_username / _password).
+
+- name: Join Windows hosts to AD domain alcor.co.in
+  hosts: "{{ target | default('os_windows') }}"
+  gather_facts: true
+  vars:
+    ad_domain_name: alcor.co.in
+    # Point this at the DC's private IP so the host can resolve the domain.
+    # Leave empty if the VPC DHCP option set already serves the DC as DNS.
+    domain_dns_server: ""
+    # Optional: place the computer object in a specific OU, e.g.
+    #   ou_path: "OU=Servers,DC=alcor,DC=co,DC=in"
+    ou_path: ""
+    # Domain-join account from the single consolidated secret
+    # (group_vars/all.yml -> ansible_credentials).
+    domain_admin_user: "{{ ansible_credentials.domain_join_username }}"
+    domain_admin_password: "{{ ansible_credentials.domain_join_password }}"
+  tasks:
+    - name: Assert domain-join credentials are present in the consolidated secret
+      ansible.builtin.assert:
+        that:
+          - domain_admin_user | length > 0
+          - domain_admin_password | length > 0
+        fail_msg: >-
+          domain_join_username / domain_join_password are empty. Set
+          var.domain_join_username and var.domain_join_password in terraform.tfvars.
+      no_log: true
+
+    - name: Skip domain controllers (they are already the domain)
+      ansible.builtin.meta: end_host
+      when: "'role_dc' in group_names"
+
+    - name: Point DNS at the domain controller (needed to resolve the domain)
+      ansible.windows.win_dns_client:
+        adapter_names: '*'
+        dns_servers:
+          - "{{ domain_dns_server }}"
+      when: domain_dns_server | length > 0
+
+    - name: Join the domain (reboots automatically on change)
+      microsoft.ad.membership:
+        dns_domain_name: "{{ ad_domain_name }}"
+        domain_admin_user: "{{ domain_admin_user }}"
+        domain_admin_password: "{{ domain_admin_password }}"
+        domain_ou_path: "{{ ou_path | default(omit, true) }}"
+        state: domain
+        reboot: true
+      register: join_result
+
+    - name: Report membership result
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} -> {{ ad_domain_name }} (changed={{ join_result.changed }})"

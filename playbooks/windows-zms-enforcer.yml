@@ -1,0 +1,140 @@
+---
+# Install the Zscaler Microsegmentation (ZMS) Enforcer on Windows servers.
+# Ansible conversion of windows/install.ps1. The provisioning nonce is pulled
+# from AWS Secrets Manager at run time (never passed on the command line or
+# stored in Git).
+#
+#   ansible-playbook playbooks/windows-zms-enforcer.yml
+#   ansible-playbook playbooks/windows-zms-enforcer.yml --limit win-app01
+#   ansible-playbook playbooks/windows-zms-enforcer.yml -e zms_auto_reboot=true
+#
+# Prereq: set var.provision_key in terraform.tfvars (the pipe-delimited nonce from
+# the ZMS Console); Terraform writes it to the consolidated secret's provision_key.
+#
+# Mapping from install.ps1:
+#   Get-NonceValue / Set-ProvisionKey  -> Secrets Manager lookup + win_copy
+#   Resolve-DownloadEndpoint           -> win_wait_for loop (prod then beta)
+#   Get-ZMSInstaller                   -> win_get_url with retries + win_stat
+#   Install-ZMSEnforcer                -> win_package (PROVISIONKEY_FILE property)
+# TLS/cert validation from the script is covered by win_get_url's validate_certs.
+
+- name: Provision and install the Zscaler Microsegmentation Enforcer
+  hosts: "{{ target | default('os_windows') }}"
+  gather_facts: false
+  vars:
+    zms_temp_dir: 'C:\Windows\Temp\ZscalerZMS'
+    msi_filename: eyez-agentmanager-default.msi
+    provision_key_path: '{{ zms_temp_dir }}\provision_key'
+    installer_path: '{{ zms_temp_dir }}\{{ msi_filename }}'
+    msi_log: '{{ zms_temp_dir }}\msiexec.log'
+
+    # ZMS provisioning nonce = the 'provision_key' field of the single
+    # consolidated secret (group_vars/all.yml -> ansible_credentials). Set it via
+    # terraform.tfvars (var.provision_key).
+    zms_nonce: "{{ ansible_credentials.provision_key | trim }}"
+
+    zms_download_retries: 3
+    zms_download_delay: 5
+    zms_auto_reboot: false           # set true to let Ansible reboot on exit 3010
+    zms_cleanup_provision_key: true  # remove the nonce file after install
+
+    # Download endpoints: production first, beta fallback (as in the script).
+    zms_endpoints:
+      - name: ZPA Production
+        host: eyez-dist.private.zscaler.com
+        url: "https://eyez-dist.private.zscaler.com/windows/{{ msi_filename }}"
+      - name: ZPA Beta
+        host: eyez-dist.zpabeta.net
+        url: "https://eyez-dist.zpabeta.net/windows/{{ msi_filename }}"
+  tasks:
+    - name: Assert the nonce was retrieved from Secrets Manager
+      ansible.builtin.assert:
+        that:
+          - zms_nonce | length > 0
+        fail_msg: "ZMS nonce could not be retrieved from Secrets Manager ({{ zms_nonce_secret_id }})."
+      no_log: true
+
+    - name: Ensure the staging directory exists
+      ansible.windows.win_file:
+        path: "{{ zms_temp_dir }}"
+        state: directory
+
+    - name: Write the provision_key file (exact nonce, no BOM/newline)
+      ansible.windows.win_copy:
+        content: "{{ zms_nonce }}"
+        dest: "{{ provision_key_path }}"
+      no_log: true
+
+    - name: Test TCP connectivity to the ZMS download endpoints (443)
+      ansible.windows.win_wait_for:
+        host: "{{ item.host }}"
+        port: 443
+        timeout: 10
+        state: started
+      loop: "{{ zms_endpoints }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.host }})"
+      register: zms_conn
+      ignore_errors: true
+
+    - name: Select the first reachable download endpoint (prod -> beta)
+      ansible.builtin.set_fact:
+        zms_resolved_url: "{{ (zms_conn.results | rejectattr('failed') | map(attribute='item.url') | list | first) | default('') }}"
+
+    - name: Fail if no endpoint is reachable
+      ansible.builtin.assert:
+        that:
+          - zms_resolved_url | length > 0
+        fail_msg: >-
+          No ZMS download endpoint is reachable on 443. Verify outbound HTTPS to
+          {{ zms_endpoints | map(attribute='host') | join(', ') }}.
+
+    - name: Download the ZMS Enforcer MSI (with retries)
+      ansible.windows.win_get_url:
+        url: "{{ zms_resolved_url }}"
+        dest: "{{ installer_path }}"
+        force: true
+        validate_certs: true
+      register: zms_dl
+      until: zms_dl is succeeded
+      retries: "{{ zms_download_retries }}"
+      delay: "{{ zms_download_delay }}"
+
+    - name: Verify the installer exists and is non-empty
+      ansible.windows.win_stat:
+        path: "{{ installer_path }}"
+      register: msi_stat
+
+    - name: Assert the MSI downloaded correctly
+      ansible.builtin.assert:
+        that:
+          - msi_stat.stat.exists
+          - msi_stat.stat.size | int > 0
+        fail_msg: "MSI download failed or the file is empty."
+
+    - name: Install the ZMS Enforcer (passes PROVISIONKEY_FILE to msiexec)
+      ansible.windows.win_package:
+        path: "{{ installer_path }}"
+        state: present
+        arguments: 'PROVISIONKEY_FILE="{{ provision_key_path }}" /l*v "{{ msi_log }}"'
+        expected_return_code: [0, 3010]
+      register: zms_install
+
+    - name: Reboot if the installer requested it (exit 3010)
+      ansible.windows.win_reboot:
+      when:
+        - zms_install.reboot_required | default(false)
+        - zms_auto_reboot | bool
+
+    - name: Note that a reboot is pending (auto-reboot disabled)
+      ansible.builtin.debug:
+        msg: "ZMS Enforcer installed; a reboot is required (exit 3010). Schedule one."
+      when:
+        - zms_install.reboot_required | default(false)
+        - not (zms_auto_reboot | bool)
+
+    - name: Remove the provision_key file (contains the nonce)
+      ansible.windows.win_file:
+        path: "{{ provision_key_path }}"
+        state: absent
+      when: zms_cleanup_provision_key | bool

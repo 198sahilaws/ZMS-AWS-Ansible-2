@@ -1,0 +1,49 @@
+#cloud-config
+# Corrected control-node bootstrap for the ZMS-AWS-Ansible-1 (push) repo.
+# Drop-in replacement for modules/ansible-control/cloud-init.yaml in the
+# Terraform repo. Templatefile vars used: control_repo_url, control_repo_branch,
+# aws_region, secret_name, secret_arn.
+package_update: true
+package_upgrade: false
+packages:
+  - git
+  - python3-pip
+  - python3-boto3            # amazon.aws REQUIRES boto3/botocore (was missing)
+  - software-properties-common
+
+write_files:
+  # Environment for the systemd units. systemd (like cron/sudo) has no shell
+  # environment, so region + secret name must come from this EnvironmentFile.
+  - path: /etc/ansible/estate.env
+    permissions: '0640'
+    owner: root:root
+    content: |
+      # Injected by Terraform at control-node build time. Do not edit by hand.
+      AWS_REGION=${aws_region}
+      ANSIBLE_SECRET_NAME=${secret_name}
+      ANSIBLE_SECRET_ARN=${secret_arn}
+      CONTROL_REPO_DIR=/opt/control-repo
+
+runcmd:
+  # Session Manager (private node reachable without SSH).
+  - [ bash, -c, "systemctl enable --now amazon-ssm-agent 2>/dev/null || systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service 2>/dev/null || true" ]
+  # ansible-core + ansible-galaxy (idempotent if already present).
+  - [ bash, -c, "command -v ansible-playbook >/dev/null 2>&1 || (add-apt-repository --yes --update ppa:ansible/ansible && apt-get install -y ansible)" ]
+%{ if control_repo_url != "" ~}
+  # Clone the control repo (ZMS-AWS-Ansible-1) and make it ubuntu-owned.
+  - [ bash, -c, "test -d /opt/control-repo/.git || git clone -b ${control_repo_branch} ${control_repo_url} /opt/control-repo" ]
+  - [ bash, -c, "chown -R ubuntu:ubuntu /opt/control-repo && chmod +x /opt/control-repo/scripts/reconverge.sh 2>/dev/null || true" ]
+  # Persistent Ansible log dir (ansible.cfg log_path + notify-result.sh write here).
+  - [ bash, -c, "install -d -o ubuntu -g ubuntu /var/log/ansible && chmod +x /opt/control-repo/scripts/notify-result.sh 2>/dev/null || true" ]
+  # Install repo-local collections (amazon.aws, ansible.windows, microsoft.ad, ...).
+  - [ bash, -c, "cd /opt/control-repo && sudo -u ubuntu ansible-galaxy collection install -r requirements.yml" ]
+  # Install + enable the repo's systemd timers (self-converge + estate push).
+  - [ bash, -c, "cp /opt/control-repo/systemd/ansible-*.service /opt/control-repo/systemd/ansible-*.timer /etc/systemd/system/ && systemctl daemon-reload" ]
+  - [ bash, -c, "systemctl enable --now ansible-bootstrap.timer ansible-estate.timer" ]
+  # First-boot self-converge NOW (writes the SSH key, verifies inventory); the
+  # estate timer (OnBootSec=10min) then pushes site.yml once the managed hosts
+  # have finished their own user-data (e.g. the Windows WinRM listener).
+  - [ bash, -c, "systemctl start ansible-bootstrap.service || true" ]
+%{ else ~}
+  - [ bash, -c, "echo 'WARNING: control_repo_url is empty — no Ansible automation was configured.' >&2" ]
+%{ endif ~}

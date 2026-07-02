@@ -1,0 +1,38 @@
+---
+# Create an SMB network share on Windows file servers.
+# Default access model: Everyone read-only (both share-level and NTFS).
+#
+#   ansible-playbook playbooks/windows-share.yml
+#   ansible-playbook playbooks/windows-share.yml -e share_name=software -e 'share_path=D:\Shares\software'
+#   ansible-playbook playbooks/windows-share.yml --limit win-fs01
+
+- name: Create a read-only network share
+  hosts: "{{ target | default('role_fileserver') }}"
+  gather_facts: false
+  vars:
+    share_name: data
+    share_path: 'C:\Shares\{{ share_name }}'
+    share_description: Read-only file share managed by Ansible
+  tasks:
+    - name: Ensure the share directory exists
+      ansible.windows.win_file:
+        path: "{{ share_path }}"
+        state: directory
+
+    - name: Grant Everyone NTFS read on the folder
+      ansible.windows.win_acl:
+        path: "{{ share_path }}"
+        user: Everyone
+        rights: ReadAndExecute
+        type: allow
+        state: present
+        inherit: ContainerInherit, ObjectInherit
+        propagation: None
+
+    - name: Create/Update the SMB share (Everyone read-only)
+      ansible.windows.win_share:
+        name: "{{ share_name }}"
+        path: "{{ share_path }}"
+        description: "{{ share_description }}"
+        read: Everyone
+        state: present

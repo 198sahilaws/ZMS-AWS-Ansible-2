@@ -1,0 +1,31 @@
+---
+# Variables applied to every host in the estate.
+
+# Path where the Ansible SSH private key is written. bootstrap.yml writes it here
+# from the consolidated credentials secret (see ansible_credentials below).
+ansible_ssh_private_key_file: /etc/ansible/keys/ansible_ed25519
+
+# AWS region used by amazon.aws lookups (e.g. aws_secret) and the dynamic
+# inventory. Single source of truth: set the AWS_REGION env var to override;
+# defaults to eu-west-3. Override per environment in env_*.yml if needed.
+aws_region: "{{ lookup('ansible.builtin.env', 'AWS_REGION') | default('eu-west-3', true) }}"
+
+# --- Consolidated Ansible credentials secret ------------------------------
+# Terraform (module.secrets) creates ONE secret per deployment, named
+# <base>/ansible-credentials-<suffix>, holding a single JSON document:
+#   { "ssh_private_key": "<PEM>", "winrm_username": "...", "winrm_password": "..." }
+#
+# The dynamic name is handed to the control node by its cloud-init as the
+# ANSIBLE_SECRET_NAME environment variable (Terraform and Ansible run on
+# different machines, so the name crosses via the environment, not a file). A
+# higher-precedence `ansible_secret_name` var (also injected by cloud-init into
+# the vars file) overrides the env-var line below if present.
+ansible_secret_name: "{{ lookup('ansible.builtin.env', 'ANSIBLE_SECRET_NAME') | default('', true) }}"
+
+# Resolve the secret ONCE; os_windows.yml and bootstrap.yml read fields off this.
+# Evaluated lazily (only when referenced), so Linux-only runs never call it.
+ansible_credentials: "{{ lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json }}"
+
+# Internal repository server reachable from the VPC. Roles/plays reference these
+# instead of public mirrors so hardened hosts stay on the internal supply chain.
+repo_base_url: http://repo.internal.example.com

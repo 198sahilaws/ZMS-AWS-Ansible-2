@@ -1,0 +1,34 @@
+---
+# Enable the IIS web server on user-selected Windows hosts.
+#
+#   ansible-playbook playbooks/windows-iis.yml                 # all role_web hosts
+#   ansible-playbook playbooks/windows-iis.yml --limit win-web01
+#   ansible-playbook playbooks/windows-iis.yml -e target=os_windows --limit 'web*'
+#
+# Add extra IIS features by overriding iis_features, e.g.:
+#   -e '{"iis_features":["Web-Server","Web-Asp-Net45","Web-Mgmt-Console"]}'
+
+- name: Enable IIS web server
+  hosts: "{{ target | default('role_web') }}"
+  gather_facts: true
+  vars:
+    iis_features:
+      - Web-Server          # core IIS
+      - Web-Mgmt-Console    # IIS management console
+  tasks:
+    - name: Install IIS features
+      ansible.windows.win_feature:
+        name: "{{ iis_features }}"
+        include_management_tools: true
+        state: present
+      register: iis_feature
+
+    - name: Reboot if the feature install requires it
+      ansible.windows.win_reboot:
+      when: iis_feature.reboot_required
+
+    - name: Ensure the World Wide Web Publishing service is running
+      ansible.windows.win_service:
+        name: W3SVC
+        state: started
+        start_mode: auto
