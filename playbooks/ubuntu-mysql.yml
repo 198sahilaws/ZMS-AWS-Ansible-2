@@ -7,8 +7,9 @@
 # By default this installs MySQL and ensures the service is running/enabled.
 # To also set the root password, pass it in (ideally from Secrets Manager):
 #   -e mysql_root_password="$(...)"
-# or uncomment the lookup below. On a fresh Ubuntu install the root account
-# uses auth_socket, so the local socket connection works without a password.
+# or uncomment the lookup below. On a fresh Ubuntu install the root account uses
+# the auth_socket plugin (password is ignored), so the root-password step below
+# also switches root to mysql_native_password so the password actually works.
 
 - name: Install and enable MySQL
   hosts: "{{ target | default('os_linux') }}"
@@ -38,12 +39,20 @@
         state: started
         enabled: true
 
-    - name: Set the MySQL root password (optional)
+    - name: Set the MySQL root password (switch root from auth_socket to password auth)
       community.mysql.mysql_user:
         name: root
-        password: "{{ mysql_root_password }}"
         host: localhost
+        password: "{{ mysql_root_password }}"
+        # Fresh Ubuntu root uses the auth_socket plugin (password ignored). Force
+        # mysql_native_password so the supplied password actually authenticates.
+        plugin: mysql_native_password
         login_unix_socket: /run/mysqld/mysqld.sock
+        # Idempotent across reruns: try the implicit socket admin first (before the
+        # switch), then fall back to the password we just set.
+        check_implicit_admin: true
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
         state: present
       no_log: true
       when: mysql_root_password | length > 0

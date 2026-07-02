@@ -3,7 +3,8 @@
 
 # Path where the Ansible SSH private key is written. bootstrap.yml writes it here
 # from the consolidated credentials secret (see ansible_credentials below).
-ansible_ssh_private_key_file: /etc/ansible/keys/ansible_ed25519
+# The Terraform keypair is RSA, so use a distro-neutral filename (not *_ed25519).
+ansible_ssh_private_key_file: /etc/ansible/keys/ansible_rsa
 
 # AWS region used by amazon.aws lookups (e.g. aws_secret) and the dynamic
 # inventory. Single source of truth: set the AWS_REGION env var to override;

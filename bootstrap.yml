@@ -28,15 +28,20 @@
         mode: "0700"
 
     - name: Install required collections
-      community.general.ansible_galaxy_install:
-        type: collection
-        requirements_file: "{{ playbook_dir }}/requirements.yml"
+      # Use the ansible-galaxy CLI directly so this does not depend on
+      # community.general already being installed — that is one of the very
+      # collections this task installs (chicken-and-egg on a bare ansible-core node).
+      ansible.builtin.command:
+        cmd: ansible-galaxy collection install -r requirements.yml
+        chdir: "{{ playbook_dir }}"
+      register: galaxy_install
+      changed_when: "'Installing' in galaxy_install.stdout or 'Downloading' in galaxy_install.stdout"
       become: false
 
     - name: Write the Ansible SSH private key from the consolidated secret
       ansible.builtin.copy:
         content: "{{ ansible_credentials.ssh_private_key }}"
-        dest: "{{ ansible_key_dir }}/ansible_ed25519"
+        dest: "{{ ansible_ssh_private_key_file }}"
         owner: root
         group: root
         mode: "0600"

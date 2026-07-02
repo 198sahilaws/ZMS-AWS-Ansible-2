@@ -1,28 +1,22 @@
 ---
-# Install MySQL and run it as a service on SELECTED Amazon Linux servers.
+# Install MariaDB (a MySQL-compatible drop-in) on SELECTED Amazon Linux servers.
 #
 #   ansible-playbook playbooks/amazonlinux-mysql.yml --limit db01
 #   ansible-playbook playbooks/amazonlinux-mysql.yml -e target=role_db
 #
-# Amazon Linux 2023 (EL9-based) does not ship MySQL in its core repos, so this
-# adds the official MySQL Community repo, then installs mysql-community-server
-# (service 'mysqld'). Point mysql_repo_rpm at an internal mirror if preferred.
+# Amazon Linux 2023 ships MariaDB (mariadb105-server, service 'mariadb') in its
+# CORE repos, so no external MySQL Community repo / public-internet download is
+# required — keeping hardened, egress-restricted hosts on the internal supply
+# chain and avoiding the temp-root-password dance MySQL Community imposes.
 #
-# Alternative: if MariaDB (a MySQL-compatible drop-in) is acceptable, install
-# 'mariadb105-server' instead (service 'mariadb') — no external repo needed.
-#
-# NOTE: MySQL Community generates a TEMPORARY root password in /var/log/mysqld.log
-# on first start. Setting a new root password non-interactively requires that
-# temp password, so the optional root step below is best-effort and disabled by
-# default. For greenfield automation many teams prefer MariaDB for this reason.
+# If you specifically need Oracle MySQL, add its Community repo from an INTERNAL
+# mirror (repo_base_url) rather than dev.mysql.com, then install
+# mysql-community-server (service 'mysqld') and adjust the socket path below.
 
-- name: Install and enable MySQL
+- name: Install and enable MariaDB (MySQL-compatible)
   hosts: "{{ target | default('os_linux') }}"
   gather_facts: true
   vars:
-    mysql_repo_rpm: "https://dev.mysql.com/get/mysql84-community-release-el9-1.noarch.rpm"
-    # MySQL's current RPM signing key; point at an internal mirror if preferred.
-    mysql_gpg_key: "https://repo.mysql.com/RPM-GPG-KEY-mysql-2023"
     # Root password from the single consolidated secret (group_vars/all.yml ->
     # ansible_credentials). Empty (default) skips the root-password step.
     mysql_root_password: "{{ ansible_credentials.mysql_root_password | default('', true) }}"
@@ -31,35 +25,33 @@
       ansible.builtin.meta: end_host
       when: ansible_os_family != "RedHat"
 
-    - name: Import the MySQL GPG signing key (so the release RPM is verified)
-      ansible.builtin.rpm_key:
-        key: "{{ mysql_gpg_key }}"
-        state: present
-
-    - name: Install the MySQL Community repository
-      ansible.builtin.dnf:
-        name: "{{ mysql_repo_rpm }}"
-        state: present
-
-    - name: Install MySQL Community server and the Python client
+    - name: Install MariaDB server and the Python client (for Ansible mysql modules)
       ansible.builtin.dnf:
         name:
-          - mysql-community-server
+          - mariadb105-server
           - python3-PyMySQL
         state: present
 
-    - name: Ensure mysqld is started and enabled at boot
+    - name: Ensure mariadb is started and enabled at boot
       ansible.builtin.service:
-        name: mysqld
+        name: mariadb
         state: started
         enabled: true
 
-    - name: Set the MySQL root password (optional; see note above)
+    - name: Set the MariaDB root password (switch root from unix_socket to password auth)
       community.mysql.mysql_user:
         name: root
-        password: "{{ mysql_root_password }}"
         host: localhost
+        password: "{{ mysql_root_password }}"
+        # Fresh MariaDB root uses the unix_socket plugin (password ignored). Force
+        # mysql_native_password so the supplied password actually authenticates.
+        plugin: mysql_native_password
         login_unix_socket: /var/lib/mysql/mysql.sock
+        # Idempotent across reruns: try the implicit socket admin first (before the
+        # switch), then fall back to the password we just set.
+        check_implicit_admin: true
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
         state: present
       no_log: true
       when: mysql_root_password | length > 0

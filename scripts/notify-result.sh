@@ -21,13 +21,22 @@ if [ "$RESULT" != "success" ]; then
     >> "$LOG_DIR/converge-failures.log" 2>/dev/null || true
 
   # Optional alert: set ANSIBLE_ALERT_SNS_TOPIC_ARN in /etc/ansible/estate.env.
+  # Region comes from AWS_REGION (Terraform injects it into estate.env). Do NOT
+  # hardcode a region fallback — a wrong region silently publishes nowhere. If
+  # AWS_REGION is unset, extract it from the topic ARN (arn:aws:sns:<region>:...).
   if [ -n "${ANSIBLE_ALERT_SNS_TOPIC_ARN:-}" ] && command -v aws >/dev/null 2>&1; then
-    aws sns publish \
-      --region "${AWS_REGION:-us-east-1}" \
-      --topic-arn "$ANSIBLE_ALERT_SNS_TOPIC_ARN" \
-      --subject "Ansible ${LABEL} converge FAILED on ${HOST}" \
-      --message "$(tail -n 40 "$LOG_DIR/converge-failures.log" 2>/dev/null)" \
-      >/dev/null 2>&1 || true
+    SNS_REGION="${AWS_REGION:-$(echo "$ANSIBLE_ALERT_SNS_TOPIC_ARN" | cut -d: -f4)}"
+    if [ -n "$SNS_REGION" ]; then
+      aws sns publish \
+        --region "$SNS_REGION" \
+        --topic-arn "$ANSIBLE_ALERT_SNS_TOPIC_ARN" \
+        --subject "Ansible ${LABEL} converge FAILED on ${HOST}" \
+        --message "$(tail -n 40 "$LOG_DIR/converge-failures.log" 2>/dev/null)" \
+        >/dev/null 2>&1 || true
+    else
+      echo "$TS ${LABEL} SNS alert skipped: no AWS_REGION and none in topic ARN" \
+        >> "$LOG_DIR/converge-failures.log" 2>/dev/null || true
+    fi
   fi
 fi
 exit 0
