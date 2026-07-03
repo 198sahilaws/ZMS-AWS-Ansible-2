@@ -9,6 +9,13 @@ ansible_winrm_transport: ntlm     # 'kerberos' if domain-joined; see §6
 ansible_winrm_server_cert_validation: ignore
 ansible_winrm_message_encryption: auto           # encrypt payload over NTLM/HTTP
 
+# ansible.cfg enables become globally with method 'sudo' (correct for Linux). That
+# is invalid on Windows — the exec wrapper rejects sudo ("set the become method to
+# runas"). Our win_* tasks connect as an administrator and need no escalation, so
+# turn become OFF for the Windows estate. (Set ansible_become_method: runas only if
+# a specific task truly needs to elevate a non-admin.)
+ansible_become: false
+
 # Credentials come from the single consolidated secret, resolved field-scoped and
 # inline (not via a global bundle var — see the note in group_vars/all.yml).
 # Nothing sensitive is stored in Git; ansible_password is automatically scrubbed
