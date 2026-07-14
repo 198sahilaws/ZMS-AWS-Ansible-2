@@ -5,6 +5,16 @@
 # consolidated credentials secret and writes the SSH key from it.
 set -euo pipefail
 
+# Load the Terraform-injected environment (AWS_REGION, ANSIBLE_SECRET_NAME,
+# CONTROL_REPO_DIR). The systemd unit provides these via EnvironmentFile, but a
+# manual run does not — so source the file here to make both paths work.
+ENV_FILE="${ANSIBLE_ESTATE_ENV:-/etc/ansible/estate.env}"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  . "$ENV_FILE"
+  set +a
+fi
+
 REPO_DIR="${CONTROL_REPO_DIR:-/opt/control-repo}"
 
 cd "${REPO_DIR}"
