@@ -4,14 +4,17 @@ ansible_connection: ssh
 ansible_become: true
 ansible_become_method: sudo
 
-# The login user must be known BEFORE Ansible connects (pre-facts), so it cannot
-# be auto-detected. This is the FALLBACK for any Linux host lacking a Distro tag;
-# group_vars/distro_amazon.yml and distro_ubuntu.yml (higher ansible_group_priority)
-# set the correct user per distro:
-#   - ec2-user   (Amazon Linux / RHEL)  -> distro_amazon
-#   - ubuntu     (Ubuntu)               -> distro_ubuntu
-linux_login_user: ubuntu
-ansible_user: "{{ linux_login_user }}"
+# The login user is set PER DISTRO, in inventory/group_vars/distro_amazon.yml
+# (ec2-user) and distro_ubuntu.yml (ubuntu). It is deliberately NOT set here:
+# defining ansible_user in os_linux too would create a same-level group-var
+# conflict that ansible_group_priority does not reliably resolve on ansible-core
+# 2.21 (os_linux was winning and every Linux host connected as 'ubuntu', so the
+# Amazon Linux hosts failed with publickey). With ansible_user defined ONLY in
+# the distro groups, the correct user always wins — no priority needed.
+#
+# Fallback for a Linux host with NO Distro tag (should not happen; Terraform tags
+# every VM): uncomment to default such hosts to ubuntu.
+# ansible_user: ubuntu
 
 # --- Private subnets / bastion (optional) ---------------------------------
 # If the control node cannot route directly to managed hosts, tunnel SSH
