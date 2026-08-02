@@ -1,5 +1,9 @@
 ---
 # Combined Amazon Linux setup: full package update + install common packages.
+#
+# MAINTENANCE PLAYBOOK — deliberately NOT in orchestrate.yml. It runs a full
+# `dnf "*" latest` and may REBOOT the host, so it must not run unattended on the
+# hourly estate timer. Run it in a maintenance window, ideally with --limit.
 # Condenses amazonlinux-update-packages, amazonlinux-install-netcat and
 # amazonlinux-install-packages into one playbook. Use tags to run a subset:
 #
@@ -31,6 +35,8 @@
         name: "*"
         state: latest
         update_cache: true
+        # AL2023's curl / curl-minimal conflict also blocks a full upgrade.
+        allowerasing: true
       tags: [update]
 
     - name: Ensure needs-restarting is available

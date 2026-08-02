@@ -7,7 +7,8 @@
 #   ansible-playbook playbooks/windows-client.yml --limit wclient01
 
 - name: Configure Windows client hosts
-  hosts: "{{ target | default('role_client') }}"
+  # role_client spans Linux and Windows — intersect with os_windows.
+  hosts: "{{ target | default('role_client:&os_windows') }}"
   ignore_unreachable: true   # a down/unsynced Windows host must not abort the converge
   gather_facts: false
   tasks:

@@ -14,7 +14,8 @@
 # (service 'mysqld') and adjust the socket path below.
 
 - name: Install and enable MariaDB (MySQL-compatible)
-  hosts: "{{ target | default('distro_amazon') }}"
+  # Role AND distro intersection: only Amazon Linux DB hosts.
+  hosts: "{{ target | default('role_db:&distro_amazon') }}"
   gather_facts: true
   vars:
     # Root password from the single consolidated secret, resolved field-scoped

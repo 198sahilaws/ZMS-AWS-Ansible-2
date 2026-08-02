@@ -7,7 +7,8 @@
 #   ansible-playbook playbooks/amazonlinux-httpd.yml -e target=role_web
 
 - name: Install and enable Apache (httpd)
-  hosts: "{{ target | default('distro_amazon') }}"
+  # Role AND distro intersection (role_web spans distros and OSes).
+  hosts: "{{ target | default('role_web:&distro_amazon') }}"
   gather_facts: true
   tasks:
     - name: Skip non-RedHat-family hosts

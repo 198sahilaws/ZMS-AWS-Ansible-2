@@ -6,7 +6,8 @@
 #   ansible-playbook playbooks/linux-client.yml --limit client01
 
 - name: Configure Linux client hosts
-  hosts: "{{ target | default('role_client') }}"
+  # role_client spans Linux and Windows — intersect with os_linux.
+  hosts: "{{ target | default('role_client:&os_linux') }}"
   gather_facts: true
   become: true
   vars:

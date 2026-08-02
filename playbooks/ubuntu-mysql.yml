@@ -12,7 +12,8 @@
 # also switches root to mysql_native_password so the password actually works.
 
 - name: Install and enable MySQL
-  hosts: "{{ target | default('distro_ubuntu') }}"
+  # Role AND distro intersection: only Ubuntu DB hosts, not every Ubuntu host.
+  hosts: "{{ target | default('role_db:&distro_ubuntu') }}"
   gather_facts: true
   vars:
     # Root password from the single consolidated secret, resolved field-scoped

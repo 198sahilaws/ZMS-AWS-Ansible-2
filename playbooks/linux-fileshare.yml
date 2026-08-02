@@ -8,7 +8,8 @@
 #   ansible-playbook playbooks/linux-fileshare.yml --limit fs01
 
 - name: Install Samba and export an SMB share
-  hosts: "{{ target | default('role_fileshare') }}"
+  # role_fileshare spans Linux and Windows — intersect with os_linux.
+  hosts: "{{ target | default('role_fileshare:&os_linux') }}"
   gather_facts: true
   become: true
   vars:

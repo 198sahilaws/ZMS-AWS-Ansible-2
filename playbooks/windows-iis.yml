@@ -9,7 +9,9 @@
 #   -e '{"iis_features":["Web-Server","Web-Asp-Net45","Web-Mgmt-Console"]}'
 
 - name: Enable IIS web server
-  hosts: "{{ target | default('role_web') }}"
+  # role_web spans Linux and Windows — intersect with os_windows, or IIS tasks
+  # would be attempted against the Linux web hosts.
+  hosts: "{{ target | default('role_web:&os_windows') }}"
   ignore_unreachable: true   # a down/unsynced Windows host must not abort the converge
   gather_facts: true
   vars:

@@ -1,5 +1,9 @@
 ---
 # Combined Ubuntu setup: full package update + install common packages.
+#
+# MAINTENANCE PLAYBOOK — deliberately NOT in orchestrate.yml. It runs a full
+# `apt upgrade dist` and may REBOOT the host, so it must not run unattended on
+# the hourly estate timer. Run it in a maintenance window, ideally with --limit.
 # Condenses ubuntu-update-packages, ubuntu-install-netcat and
 # ubuntu-install-packages into one playbook. Use tags to run a subset:
 #

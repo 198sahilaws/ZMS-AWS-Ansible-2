@@ -5,7 +5,10 @@
 #   ansible-playbook playbooks/ubuntu-apache2.yml -e target=role_web
 
 - name: Install and enable Apache2
-  hosts: "{{ target | default('distro_ubuntu') }}"
+  # Role AND distro: role_web spans Ubuntu, Amazon Linux and Windows hosts, so the
+  # intersection is required — otherwise Apache would be installed on DB/client
+  # hosts (or attempted on Windows).
+  hosts: "{{ target | default('role_web:&distro_ubuntu') }}"
   gather_facts: true
   tasks:
     - name: Skip non-Debian hosts

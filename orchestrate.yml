@@ -5,33 +5,46 @@
 #   ansible-playbook orchestrate.yml
 #   ansible-playbook orchestrate.yml -e rolling_batch=25% -e max_fail_pct=20
 #
-# Order matters:
-#   1. Baseline on every host (site.yml).
-#   2. ALL Linux role services first — they are independent of Windows, so a
-#      WinRM/AD hiccup must not abort them.
-#   3. The Windows AD chain last: promote the forest, join members, then role
-#      services. Playbooks whose role group is absent are harmless no-ops
-#      ("skipping: no hosts matched").
+# DESIGN RULES (keep these when adding playbooks):
+#
+#  1. CONVERGENCE ONLY. Every playbook here must be fast, idempotent, and safe to
+#     run unattended every hour. Full OS upgrades and reboots are NOT convergence
+#     — playbooks/ubuntu-setup.yml and playbooks/amazonlinux-setup.yml do
+#     `apt upgrade dist` / `dnf "*" latest` plus a conditional reboot, so they are
+#     deliberately EXCLUDED and run manually in a maintenance window:
+#         ansible-playbook playbooks/ubuntu-setup.yml
+#         ansible-playbook playbooks/amazonlinux-setup.yml
+#     (Previously they ran here, ahead of the service playbooks; they are slow and
+#     reboot hosts, so a failure or timeout meant web/db never got installed.)
+#
+#  2. LINUX BEFORE WINDOWS. The Linux chain is independent of AD, so a Windows or
+#     WinRM problem must not prevent Linux services from converging.
+#
+#  3. EVERY PLAY TARGETS A ROLE ∩ OS/DISTRO INTERSECTION. Role groups (role_web,
+#     role_db, role_fileshare, role_client) span BOTH operating systems, so a bare
+#     role group would send Apache to Windows or IIS to Linux. Each playbook
+#     defaults to e.g. 'role_web:&distro_ubuntu' / 'role_web:&os_windows'.
+#
+#  4. Playbooks whose target group is empty are harmless no-ops
+#     ("skipping: no hosts matched").
 
-# --- 1. Baseline (Linux + Windows) ------------------------------------------
+# --- 1. Baseline on every reachable host ------------------------------------
 - import_playbook: site.yml
 
-# --- 2. Linux role services -------------------------------------------------
-- import_playbook: playbooks/ubuntu-setup.yml
-- import_playbook: playbooks/amazonlinux-setup.yml
-- import_playbook: playbooks/ubuntu-apache2.yml
-- import_playbook: playbooks/amazonlinux-httpd.yml
-- import_playbook: playbooks/ubuntu-mysql.yml
-- import_playbook: playbooks/amazonlinux-mysql.yml
-- import_playbook: playbooks/linux-fileshare.yml
-- import_playbook: playbooks/linux-client.yml
+# --- 2. Linux role services (independent of Windows/AD) ----------------------
+- import_playbook: playbooks/ubuntu-apache2.yml      # role_web  & distro_ubuntu
+- import_playbook: playbooks/amazonlinux-httpd.yml   # role_web  & distro_amazon
+- import_playbook: playbooks/ubuntu-mysql.yml        # role_db   & distro_ubuntu
+- import_playbook: playbooks/amazonlinux-mysql.yml   # role_db   & distro_amazon
+- import_playbook: playbooks/linux-fileshare.yml     # role_fileshare & os_linux
+- import_playbook: playbooks/linux-client.yml        # role_client    & os_linux
 
 # --- 3. Windows AD chain (forest -> members -> RODC -> services) -------------
-- import_playbook: playbooks/windows-adds.yml
-- import_playbook: playbooks/windows-domain-join.yml
-- import_playbook: playbooks/windows-rodc.yml
-- import_playbook: playbooks/windows-iis.yml
-- import_playbook: playbooks/windows-share.yml
-- import_playbook: playbooks/windows-python.yml
-- import_playbook: playbooks/windows-zms-enforcer.yml
-- import_playbook: playbooks/windows-client.yml
+- import_playbook: playbooks/windows-adds.yml        # role_dc
+- import_playbook: playbooks/windows-domain-join.yml # os_windows (skips DC/RODC)
+- import_playbook: playbooks/windows-rodc.yml        # role_rodc
+- import_playbook: playbooks/windows-iis.yml         # role_web       & os_windows
+- import_playbook: playbooks/windows-share.yml       # role_fileshare & os_windows
+- import_playbook: playbooks/windows-python.yml      # os_windows
+- import_playbook: playbooks/windows-zms-enforcer.yml # os_windows
+- import_playbook: playbooks/windows-client.yml      # role_client    & os_windows
