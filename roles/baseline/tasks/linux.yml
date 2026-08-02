@@ -4,10 +4,23 @@
   community.general.timezone:
     name: "{{ baseline_timezone }}"
 
-- name: Ensure baseline packages are present
-  ansible.builtin.package:
+- name: Ensure baseline packages are present (Debian family)
+  ansible.builtin.apt:
     name: "{{ baseline_linux_packages }}"
     state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == "Debian"
+
+- name: Ensure baseline packages are present (RedHat family)
+  ansible.builtin.dnf:
+    name: "{{ baseline_linux_packages }}"
+    state: present
+    # Amazon Linux 2023 ships 'curl-minimal', which conflicts with the full
+    # 'curl' package. allowerasing lets dnf swap it instead of failing the
+    # transaction ("curl-minimal conflicts with curl").
+    allowerasing: true
+  when: ansible_os_family == "RedHat"
 
 - name: Ensure chrony (time sync) is enabled and running
   ansible.builtin.service:

@@ -59,4 +59,7 @@
         name: "{{ amazonlinux_packages }}"
         state: present
         update_cache: true
+        # AL2023 ships 'curl-minimal'; allow dnf to swap it for full 'curl'
+        # instead of failing on the conflict.
+        allowerasing: true
       tags: [packages]
