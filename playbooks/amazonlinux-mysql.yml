@@ -21,17 +21,55 @@
     # Root password from the single consolidated secret, resolved field-scoped
     # inline (see group_vars/all.yml note). Empty (default) skips the step.
     mysql_root_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).mysql_root_password | default('', true) }}"
+    # MariaDB server package (AL2023 core repos — no external vendor repo needed).
+    mariadb_server_package: mariadb105-server
+    # Candidate RPM names for the Python MySQL client, tried in order. Absent
+    # names are tolerated; a pip fallback covers the case where none exist.
+    mysql_python_packages:
+      - python3-PyMySQL
+      - python3-pymysql
   tasks:
     - name: Skip non-RedHat-family hosts
       ansible.builtin.meta: end_host
       when: ansible_os_family != "RedHat"
 
-    - name: Install MariaDB server and the Python client (for Ansible mysql modules)
+    - name: Install the MariaDB server
       ansible.builtin.dnf:
-        name:
-          - mariadb105-server
-          - python3-PyMySQL
+        name: "{{ mariadb_server_package }}"
         state: present
+        # AL2023 ships curl-minimal, which can conflict during dependency pulls.
+        allowerasing: true
+
+    # The Python MySQL client that community.mysql needs is packaged under
+    # different names across RHEL-family releases, and is NOT present in the
+    # AL2023 repos as 'python3-PyMySQL' ("No package ... available", which failed
+    # the whole task and left MariaDB installed but unstarted). Try the known RPM
+    # names best-effort, verify the module actually imports, and fall back to pip.
+    - name: Install a Python MySQL client from the distro repos (best effort)
+      ansible.builtin.dnf:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ mysql_python_packages }}"
+      register: mysql_py_rpm
+      failed_when: false
+
+    - name: Check whether the Python MySQL client is importable
+      ansible.builtin.command: python3 -c "import pymysql"
+      register: mysql_py_import
+      changed_when: false
+      failed_when: false
+
+    - name: Ensure pip is available (only when no distro package provided the client)
+      ansible.builtin.dnf:
+        name: python3-pip
+        state: present
+      when: mysql_py_import.rc != 0
+
+    - name: Install PyMySQL from pip (fallback when no distro package exists)
+      ansible.builtin.pip:
+        name: PyMySQL
+        state: present
+      when: mysql_py_import.rc != 0
 
     - name: Ensure mariadb is started and enabled at boot
       ansible.builtin.service:

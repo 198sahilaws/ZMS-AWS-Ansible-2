@@ -8,9 +8,13 @@ Type=oneshot
 User=ubuntu
 WorkingDirectory=/opt/control-repo
 EnvironmentFile=/etc/ansible/estate.env
-# Full estate convergence in dependency order (baseline -> Linux role services ->
-# Windows AD chain), not just the baseline. Rolling batches limit blast radius.
-ExecStart=/usr/bin/ansible-playbook orchestrate.yml -e rolling_batch=25% -e max_fail_pct=20
+# Full estate convergence via the runner, which executes each playbook as its own
+# ansible-playbook process so ONE failing role cannot abort the whole chain
+# (import_playbook shares a single process and stops at "NO MORE HOSTS LEFT").
+# The runner still exits non-zero if anything failed, so this unit reports failure.
+Environment=ROLLING_BATCH=25%
+Environment=MAX_FAIL_PCT=20
+ExecStart=/bin/bash /opt/control-repo/scripts/converge.sh
 # DC promotion + reboots can take a while; allow up to an hour before systemd
 # kills the run.
 TimeoutStartSec=3600
