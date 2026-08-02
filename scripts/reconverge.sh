@@ -6,10 +6,13 @@
 set -euo pipefail
 
 # Load the Terraform-injected environment (AWS_REGION, ANSIBLE_SECRET_NAME,
-# CONTROL_REPO_DIR). The systemd unit provides these via EnvironmentFile, but a
-# manual run does not — so source the file here to make both paths work.
+# CONTROL_REPO_DIR) for MANUAL runs. Under systemd the unit already injects these
+# via EnvironmentFile (read as root), and estate.env is root-owned 0640 — so the
+# 'ansible' service user CANNOT read it. Test readability (-r), not existence
+# (-f): if unreadable we simply rely on the already-injected environment instead
+# of aborting under 'set -e'.
 ENV_FILE="${ANSIBLE_ESTATE_ENV:-/etc/ansible/estate.env}"
-if [ -f "$ENV_FILE" ]; then
+if [ -r "$ENV_FILE" ]; then
   set -a
   . "$ENV_FILE"
   set +a

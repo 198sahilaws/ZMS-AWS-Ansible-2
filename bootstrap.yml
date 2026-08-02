@@ -31,6 +31,14 @@
         group: "{{ ansible_service_user }}"
         mode: "0700"
 
+    - name: Ensure the Ansible log directory exists (service user can write it)
+      ansible.builtin.file:
+        path: /var/log/ansible
+        state: directory
+        owner: "{{ ansible_service_user }}"
+        group: "{{ ansible_service_user }}"
+        mode: "0755"
+
     - name: Install required collections
       # Use the ansible-galaxy CLI directly so this does not depend on
       # community.general already being installed — that is one of the very

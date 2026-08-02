@@ -1,0 +1,67 @@
+---
+# Re-sync the Windows local admin password to match the consolidated secret.
+#
+# Use this when WinRM auth fails with "ntlm: the specified credentials were
+# rejected by the server" because the account password on the VM has DRIFTED from
+# the secret — e.g. windows_admin_password was changed in terraform.tfvars after
+# the VMs were built (user_data only runs at first boot, so existing VMs keep
+# their original password while the secret now holds the new one).
+#
+# It connects over WinRM and sets the local admin account (winrm_username) to
+# winrm_password from the secret, so the normal secret-based creds work afterward.
+#
+#   # Normal case: the secret's creds still connect, you just want to enforce them
+#   ansible-playbook playbooks/windows-reset-admin.yml
+#
+#   # Drift case: the secret's password is REJECTED — connect with the currently
+#   # working password (extra-vars override the secret creds from group_vars):
+#   ansible-playbook playbooks/windows-reset-admin.yml \
+#       -e ansible_user='zmsadmin' -e ansible_password='<current-working-password>'
+#
+#   # One host only:
+#   ansible-playbook playbooks/windows-reset-admin.yml --limit 10.0.0.5 -e ...
+#
+# NOTE: a password cannot be compared (Windows won't expose the hash), so this
+# ENFORCES the password and reports 'changed' every run by design. It is a manual
+# recovery tool and is deliberately NOT part of orchestrate.yml.
+#
+# If even the current password is unknown, WinRM cannot be used at all — recover
+# out-of-band instead: AWS SSM Run Command (AWS-RunPowerShellScript) to reset the
+# account, or recreate the VM so user_data re-provisions it:
+#   terraform apply -replace='module.compute_windows.aws_instance.windows["1"]'
+
+- name: Re-sync Windows local admin password from the consolidated secret
+  hosts: "{{ target | default('os_windows') }}"
+  gather_facts: false
+  vars:
+    # Target account + password to ENFORCE, read field-scoped from the secret.
+    admin_user: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).winrm_username }}"
+    admin_pass: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).winrm_password }}"
+  tasks:
+    - name: Assert the target credentials were retrieved from the secret
+      ansible.builtin.assert:
+        that:
+          - admin_user | length > 0
+          - admin_pass | length > 0
+        fail_msg: >-
+          winrm_username / winrm_password are empty in the secret
+          '{{ ansible_secret_name }}'. Set windows_admin_username /
+          windows_admin_password in terraform.tfvars.
+      no_log: true
+
+    - name: Enforce the local admin account, password, and Administrators membership
+      ansible.windows.win_user:
+        name: "{{ admin_user }}"
+        password: "{{ admin_pass }}"
+        password_never_expires: true
+        account_disabled: false
+        groups:
+          - Administrators
+        groups_action: add
+        update_password: always
+        state: present
+      no_log: true
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: local admin '{{ admin_user }}' password re-synced to the secret."
