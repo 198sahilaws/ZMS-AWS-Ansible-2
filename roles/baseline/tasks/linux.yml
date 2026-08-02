@@ -12,7 +12,7 @@
     # stays network-independent. The role playbooks that must DOWNLOAD packages
     # (ubuntu-apache2, ubuntu-mysql, ...) refresh the cache themselves, and now
     # have HTTP(80)+HTTPS(443) egress via the workload SG.
-  when: ansible_os_family == "Debian"
+  when: ansible_facts['os_family'] == "Debian"
 
 - name: Ensure baseline packages are present (RedHat family)
   ansible.builtin.dnf:
@@ -22,7 +22,7 @@
     # 'curl' package. allowerasing lets dnf swap it instead of failing the
     # transaction ("curl-minimal conflicts with curl").
     allowerasing: true
-  when: ansible_os_family == "RedHat"
+  when: ansible_facts['os_family'] == "RedHat"
 
 - name: Ensure chrony (time sync) is enabled and running
   ansible.builtin.service:

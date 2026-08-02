@@ -21,6 +21,10 @@
     domain_admin_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).domain_join_password }}"
     dsrm_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).dsrm_password }}"
   tasks:
+    - name: Skip hosts that could not be reached (no facts gathered = unreachable)
+      ansible.builtin.meta: end_host
+      when: ansible_facts | length == 0
+
     - name: Assert domain-join and DSRM credentials are present
       ansible.builtin.assert:
         that:

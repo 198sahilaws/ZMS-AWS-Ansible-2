@@ -28,6 +28,10 @@
     domain_admin_user: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).domain_join_username }}"
     domain_admin_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).domain_join_password }}"
   tasks:
+    - name: Skip hosts that could not be reached (no facts gathered = unreachable)
+      ansible.builtin.meta: end_host
+      when: ansible_facts | length == 0
+
     - name: Assert domain-join credentials are present in the consolidated secret
       ansible.builtin.assert:
         that:

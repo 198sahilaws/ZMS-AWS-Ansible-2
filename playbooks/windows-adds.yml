@@ -21,6 +21,10 @@
     # dsrm_password. Resolved field-scoped inline (see group_vars/all.yml note).
     dsrm_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).dsrm_password }}"
   tasks:
+    - name: Skip hosts that could not be reached (no facts gathered = unreachable)
+      ansible.builtin.meta: end_host
+      when: ansible_facts | length == 0
+
     - name: Assert the DSRM password is present in the consolidated secret
       ansible.builtin.assert:
         that:

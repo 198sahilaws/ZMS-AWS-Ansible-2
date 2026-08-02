@@ -17,6 +17,10 @@
       - Web-Server          # core IIS
       - Web-Mgmt-Console    # IIS management console
   tasks:
+    - name: Skip hosts that could not be reached (no facts gathered = unreachable)
+      ansible.builtin.meta: end_host
+      when: ansible_facts | length == 0
+
     - name: Install IIS features
       ansible.windows.win_feature:
         name: "{{ iis_features }}"
