@@ -20,6 +20,7 @@
 
 - name: Provision and install the Zscaler Microsegmentation Enforcer
   hosts: "{{ target | default('os_windows') }}"
+  ignore_unreachable: true   # a down/unsynced Windows host must not abort the converge
   gather_facts: false
   vars:
     zms_temp_dir: 'C:\Windows\Temp\ZscalerZMS'

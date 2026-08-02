@@ -10,6 +10,7 @@
 
 - name: Enable IIS web server
   hosts: "{{ target | default('role_web') }}"
+  ignore_unreachable: true   # a down/unsynced Windows host must not abort the converge
   gather_facts: true
   vars:
     iis_features:

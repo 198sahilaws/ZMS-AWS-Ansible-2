@@ -12,6 +12,7 @@
 
 - name: Build new AD forest (alcor.co.in)
   hosts: "{{ target | default('role_dc') }}"
+  ignore_unreachable: true   # a down/unsynced Windows host must not abort the converge
   gather_facts: true
   vars:
     ad_domain_name: alcor.co.in

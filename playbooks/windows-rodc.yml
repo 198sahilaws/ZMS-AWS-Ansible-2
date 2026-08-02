@@ -9,6 +9,7 @@
 
 - name: Promote read-only domain controllers
   hosts: "{{ target | default('role_rodc') }}"
+  ignore_unreachable: true   # a down/unsynced Windows host must not abort the converge
   gather_facts: true
   vars:
     ad_domain_name: alcor.co.in

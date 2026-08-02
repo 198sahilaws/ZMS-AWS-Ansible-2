@@ -13,6 +13,7 @@
 
 - name: Join Windows hosts to AD domain alcor.co.in
   hosts: "{{ target | default('os_windows') }}"
+  ignore_unreachable: true   # a down/unsynced Windows host must not abort the converge
   gather_facts: true
   vars:
     ad_domain_name: alcor.co.in

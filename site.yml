@@ -59,6 +59,10 @@
 - name: Windows estate
   hosts: os_windows
   gather_facts: true
+  # A Windows host that can't be reached (e.g. WinRM creds not yet synced) is
+  # logged as unreachable but must NOT abort the converge — the Linux role
+  # services run after this play and are independent of Windows.
+  ignore_unreachable: true
   serial: "{{ rolling_batch | default('100%') }}"
   max_fail_percentage: "{{ max_fail_pct | default(0) }}"
   roles:

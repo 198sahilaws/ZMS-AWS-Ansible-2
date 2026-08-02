@@ -12,6 +12,7 @@
 
 - name: Create a read-only network share
   hosts: "{{ target | default('role_fileshare') }}"
+  ignore_unreachable: true   # a down/unsynced Windows host must not abort the converge
   gather_facts: false
   vars:
     share_name: data

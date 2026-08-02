@@ -8,6 +8,7 @@
 
 - name: Configure Windows client hosts
   hosts: "{{ target | default('role_client') }}"
+  ignore_unreachable: true   # a down/unsynced Windows host must not abort the converge
   gather_facts: false
   tasks:
     - name: Confirm the client is reachable over WinRM
