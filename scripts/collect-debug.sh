@@ -184,8 +184,8 @@ find "$OUT_DIR" -type f -print0 2>/dev/null | xargs -0 -r sed -i -E \
   -e 's/(aws_secret_access_key[[:space:]]*=[[:space:]]*)[A-Za-z0-9/+=]+/\1<REDACTED>/g' \
   2>/dev/null || true
 
-TARBALL="/tmp/ansible-debug-${HOST}-${TS}.tar.gz"
-tar -czf "$TARBALL" -C "$(dirname "$OUT_DIR")" "$(basename "$OUT_DIR")" 2>/dev/null
+TARBALL="/tmp/ansible-debug-${HOST}-${TS}.tar"
+tar -cf "$TARBALL" -C "$(dirname "$OUT_DIR")" "$(basename "$OUT_DIR")" 2>/dev/null
 
 echo
 echo "Ansible debug bundle written:"
