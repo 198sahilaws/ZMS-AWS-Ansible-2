@@ -22,6 +22,18 @@
     # Who gets read access. Prefer a scoped AD group over broad built-ins.
     share_read_principal: Authenticated Users
   tasks:
+    # gather_facts is false here — guard reachability explicitly so an unreachable
+    # host is skipped cleanly instead of failing later tasks.
+    - name: Probe WinRM reachability
+      ansible.windows.win_ping:
+      register: winrm_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Skip hosts that are not reachable over WinRM
+      ansible.builtin.meta: end_host
+      when: winrm_probe.failed | default(false) or winrm_probe.unreachable | default(false)
+
     - name: Ensure the share directory exists
       ansible.windows.win_file:
         path: "{{ share_path }}"

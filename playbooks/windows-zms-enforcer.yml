@@ -48,6 +48,21 @@
         host: eyez-dist.zpabeta.net
         url: "https://eyez-dist.zpabeta.net/windows/{{ msi_filename }}"
   tasks:
+    # This play runs with gather_facts: false, so the "no facts = unreachable"
+    # guard used by the fact-gathering Windows playbooks does not apply here.
+    # Without this probe an unreachable host stays in the play (ignore_unreachable
+    # keeps it) and later tasks fail hard on registered variables, e.g.
+    # "object of type 'dict' has no attribute 'stat'" from msi_stat.stat.
+    - name: Probe WinRM reachability
+      ansible.windows.win_ping:
+      register: winrm_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Skip hosts that are not reachable over WinRM
+      ansible.builtin.meta: end_host
+      when: winrm_probe.failed | default(false) or winrm_probe.unreachable | default(false)
+
     - name: Assert the nonce was retrieved from Secrets Manager
       ansible.builtin.assert:
         that:
