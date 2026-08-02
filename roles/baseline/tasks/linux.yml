@@ -8,8 +8,10 @@
   ansible.builtin.apt:
     name: "{{ baseline_linux_packages }}"
     state: present
-    update_cache: true
-    cache_valid_time: 3600
+    # No update_cache here: the baseline packages ship in the AMI, so baseline
+    # stays network-independent. The role playbooks that must DOWNLOAD packages
+    # (ubuntu-apache2, ubuntu-mysql, ...) refresh the cache themselves, and now
+    # have HTTP(80)+HTTPS(443) egress via the workload SG.
   when: ansible_os_family == "Debian"
 
 - name: Ensure baseline packages are present (RedHat family)
