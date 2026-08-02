@@ -1,0 +1,60 @@
+---
+# Promote read-only domain controllers (role_rodc) into the EXISTING forest.
+# microsoft.ad.domain_controller promotes an already domain-joined member, so the
+# sequence is: point DNS at a writable DC -> join the domain -> promote read-only.
+# Run windows-adds.yml (the forest root) first.
+#
+#   ansible-playbook playbooks/windows-rodc.yml
+#   ansible-playbook playbooks/windows-rodc.yml -e domain_dns_server=10.0.0.10
+
+- name: Promote read-only domain controllers
+  hosts: "{{ target | default('role_rodc') }}"
+  gather_facts: true
+  vars:
+    ad_domain_name: alcor.co.in
+    # Writable DC private IP so the RODC can find the domain. Leave empty if the
+    # VPC DHCP option set already serves the DC as DNS.
+    domain_dns_server: ""
+    # Credentials from the consolidated secret, resolved field-scoped and inline.
+    domain_admin_user: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).domain_join_username }}"
+    domain_admin_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).domain_join_password }}"
+    dsrm_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).dsrm_password }}"
+  tasks:
+    - name: Assert domain-join and DSRM credentials are present
+      ansible.builtin.assert:
+        that:
+          - domain_admin_user | length > 0
+          - domain_admin_password | length > 0
+          - dsrm_password | length > 0
+        fail_msg: >-
+          domain_join_username / domain_join_password / dsrm_password must be set
+          in terraform.tfvars (written to the consolidated secret) before promoting an RODC.
+      no_log: true
+
+    - name: Point DNS at the domain controller
+      ansible.windows.win_dns_client:
+        adapter_names: '*'
+        dns_servers:
+          - "{{ domain_dns_server }}"
+      when: domain_dns_server | length > 0
+
+    - name: Join the domain as a member (prerequisite for promotion)
+      microsoft.ad.membership:
+        dns_domain_name: "{{ ad_domain_name }}"
+        domain_admin_user: "{{ domain_admin_user }}"
+        domain_admin_password: "{{ domain_admin_password }}"
+        state: domain
+        reboot: true
+      no_log: true
+
+    - name: Promote to a read-only domain controller
+      microsoft.ad.domain_controller:
+        dns_domain_name: "{{ ad_domain_name }}"
+        domain_admin_user: "{{ domain_admin_user }}"
+        domain_admin_password: "{{ domain_admin_password }}"
+        safe_mode_password: "{{ dsrm_password }}"
+        read_only: true
+        install_dns: true
+        state: domain_controller
+        reboot: true
+      no_log: true

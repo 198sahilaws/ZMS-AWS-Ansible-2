@@ -14,16 +14,20 @@ populated secrets.
 ├── ansible.cfg
 ├── requirements.yml          # collections
 ├── inventory/
-│   └── aws_ec2.yml           # dynamic inventory plugin config
-├── group_vars/
-│   ├── all.yml
-│   ├── os_linux.yml          # SSH connection settings
-│   └── os_windows.yml        # WinRM connection settings
+│   ├── aws_ec2.yml           # dynamic inventory plugin config
+│   └── group_vars/           # inventory-adjacent so EVERY play loads them
+│       ├── all.yml
+│       ├── os_linux.yml      # SSH connection settings
+│       ├── os_windows.yml    # WinRM connection settings
+│       ├── distro_amazon.yml # ec2-user login
+│       └── distro_ubuntu.yml # ubuntu login
 ├── host_vars/                # rare; per-host overrides
 ├── roles/
 │   └── baseline/             # example cross-platform role
 ├── scripts/
 │   └── reconverge.sh         # cloud-init / timer hook
+├── orchestrate.yml           # full estate in dependency order (what the timer runs)
+├── site.yml                  # baseline only
 ├── bootstrap.yml             # the node configuring itself (localhost)
 └── site.yml                  # the push playbook(s) for the estate
 ```
@@ -49,7 +53,7 @@ ansible-inventory -i inventory/aws_ec2.yml --graph
 
 The region is configured in one place: the `AWS_REGION` environment variable
 (default `eu-west-3`). It is read by the dynamic inventory (`regions`), the
-`aws_region` var in `group_vars/all.yml` used by `aws_secret` lookups, and
+`aws_region` var in `inventory/group_vars/all.yml` used by `aws_secret` lookups, and
 `scripts/reconverge.sh`. To target a different region, just `export AWS_REGION=...`
 before running — no file edits needed. Per-environment overrides can also be set
 in an `env_*.yml` group_vars file.
@@ -62,7 +66,7 @@ No static secrets in Git.
   `/etc/ansible/keys/ansible_ed25519` (see `scripts/reconverge.sh` and
   `bootstrap.yml`).
 - **WinRM credential** is resolved in-play via the `amazon.aws.aws_secret`
-  lookup (see `group_vars/os_windows.yml`).
+  lookup (see `inventory/group_vars/os_windows.yml`).
 - For any remaining static secrets, use `ansible-vault` with
   `--vault-password-file` sourced from the secret store.
 
@@ -111,7 +115,7 @@ changes, then enforce). At a few dozen hosts a 30–60 min cadence is comfortabl
 | Variable | Where | Default | Purpose |
 |---|---|---|---|
 | `AWS_REGION` (env) | inventory, `all.yml`, reconverge | `eu-west-3` | Target region (single knob) |
-| `linux_login_user` | `group_vars/os_linux.yml` | `ubuntu` | SSH user; override per group/host for `ec2-user`/`rocky` AMIs |
+| `linux_login_user` | `inventory/group_vars/os_linux.yml` | `ubuntu` | SSH user; override per group/host for `ec2-user`/`rocky` AMIs |
 | `rolling_batch` | `-e` at run time | `100%` | `serial:` batch size for blast-radius control |
 | `max_fail_pct` | `-e` at run time | `0` | `max_fail_percentage:` per play |
 | `linux_baseline_package` / `windows_baseline_package` | `-e` / group_vars | `htop` / `7zip` | Example package installed by `site.yml` |
@@ -141,7 +145,7 @@ CI runs the same checks on push / PR via `.github/workflows/lint.yml`.
 ## Windows task playbooks
 
 Standalone playbooks under `playbooks/`. They default to tag-derived role groups
-(`role_dc`, `role_web`, `role_fileserver`) and can be scoped with `--limit` or
+(`role_dc`, `role_web`, `role_fileshare`) and can be scoped with `--limit` or
 `-e target=...`. Run from the repo root so `ansible.cfg` and the dynamic
 inventory are picked up.
 
@@ -149,7 +153,7 @@ inventory are picked up.
 |---|---|---|
 | `playbooks/windows-adds.yml` | `role_dc` | Installs AD DS and builds a **new forest** `alcor.co.in` (NetBIOS `ALCOR`). DSRM password from Secrets Manager (`ansible-control/adds-dsrm-password`). |
 | `playbooks/windows-iis.yml` | `role_web` | Enables IIS (`Web-Server` + mgmt console) and starts `W3SVC`. Override `iis_features` for extras. |
-| `playbooks/windows-share.yml` | `role_fileserver` | Creates an SMB share, **Everyone read-only** (share + NTFS). Override `share_name` / `share_path`. |
+| `playbooks/windows-share.yml` | `role_fileshare` | Creates an SMB share, **Everyone read-only** (share + NTFS). Override `share_name` / `share_path`. |
 | `playbooks/windows-python.yml` | `os_windows` | Installs `python3` from the internal Chocolatey source. Pin with `-e python_version=3.12.4`. |
 | `playbooks/windows-domain-join.yml` | `os_windows` | Joins hosts to **alcor.co.in** via `microsoft.ad.membership` (skips `role_dc`). Join creds from Secrets Manager (`ansible-control/domain-join-credential`, JSON username/password). Set `domain_dns_server` if VPC DNS isn't the DC. |
 | `playbooks/windows-zms-enforcer.yml` | `os_windows` | Installs the **Zscaler Microsegmentation Enforcer** (conversion of `windows/install.ps1`). Nonce from Secrets Manager (`ansible-control/zms-provision-nonce`); prod→beta endpoint fallback, retried download, `PROVISIONKEY_FILE` install. |

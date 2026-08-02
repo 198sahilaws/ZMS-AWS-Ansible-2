@@ -3,7 +3,7 @@
 # Prefer signed installers / signed Chocolatey packages over large custom
 # PowerShell on hardened hosts (WDAC / AppLocker / Constrained Language Mode).
 - name: Set the timezone
-  community.windows.win_timezone:
+  ansible.windows.win_timezone:
     timezone: "{{ baseline_windows_timezone }}"
 
 - name: Ensure baseline Chocolatey packages are present

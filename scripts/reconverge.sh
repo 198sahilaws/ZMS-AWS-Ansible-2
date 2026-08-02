@@ -22,8 +22,9 @@ cd "${REPO_DIR}"
 # Keep the control repo current (single source of truth for push config).
 git pull --ff-only
 
-# Refresh collections.
-ansible-galaxy collection install -r requirements.yml
+# Refresh collections. --upgrade so changed version pins actually replace an
+# already-installed version (otherwise galaxy leaves the old one in place).
+ansible-galaxy collection install --upgrade -r requirements.yml
 
 # AWS_REGION and ANSIBLE_SECRET_NAME are injected into the environment by the
 # control node's cloud-init (Terraform module.secrets / ansible-control). The

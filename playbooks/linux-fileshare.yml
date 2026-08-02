@@ -1,0 +1,79 @@
+---
+# Install Samba and export an SMB share on Linux file servers (role_fileshare).
+# Works on both distros: Debian family uses the 'smbd' service, RedHat/Amazon
+# Linux uses 'smb'. The share account password comes from the consolidated
+# secret (samba_password), resolved field-scoped and inline.
+#
+#   ansible-playbook playbooks/linux-fileshare.yml
+#   ansible-playbook playbooks/linux-fileshare.yml --limit fs01
+
+- name: Install Samba and export an SMB share
+  hosts: "{{ target | default('role_fileshare') }}"
+  gather_facts: true
+  become: true
+  vars:
+    smb_share_name: data
+    smb_share_path: "/srv/samba/{{ smb_share_name }}"
+    smb_user: smbuser
+    smb_service: "{{ 'smb' if ansible_os_family == 'RedHat' else 'smbd' }}"
+    samba_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).samba_password | default('', true) }}"
+  tasks:
+    - name: Install Samba (Debian family)
+      ansible.builtin.apt:
+        name: [samba, samba-common-bin]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Install Samba (RedHat family)
+      ansible.builtin.dnf:
+        name: samba
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Ensure the share directory exists
+      ansible.builtin.file:
+        path: "{{ smb_share_path }}"
+        state: directory
+        mode: "0775"
+
+    - name: Define the share in smb.conf
+      ansible.builtin.blockinfile:
+        path: /etc/samba/smb.conf
+        marker: "# {mark} ANSIBLE MANAGED SHARE {{ smb_share_name }}"
+        block: |
+          [{{ smb_share_name }}]
+             path = {{ smb_share_path }}
+             browseable = yes
+             read only = yes
+             guest ok = no
+             valid users = {{ smb_user }}
+      notify: Restart samba
+
+    - name: Ensure the local Samba account exists
+      ansible.builtin.user:
+        name: "{{ smb_user }}"
+        create_home: false
+        shell: /usr/sbin/nologin
+      when: samba_password | length > 0
+
+    - name: Set the Samba password
+      ansible.builtin.shell:
+        cmd: "printf '%s\n%s\n' '{{ samba_password }}' '{{ samba_password }}' | smbpasswd -s -a {{ smb_user }}"
+      register: smbpw
+      changed_when: "'Added user' in smbpw.stdout"
+      no_log: true
+      when: samba_password | length > 0
+
+    - name: Ensure the Samba service is running and enabled
+      ansible.builtin.service:
+        name: "{{ smb_service }}"
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart samba
+      ansible.builtin.service:
+        name: "{{ smb_service }}"
+        state: restarted

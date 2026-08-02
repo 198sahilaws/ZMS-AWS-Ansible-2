@@ -1,0 +1,27 @@
+---
+# Minimal 'client' baseline for Linux client-role hosts (role_client): common CLI
+# tooling plus the SMB client so they can mount the fileshare. Extend as needed.
+#
+#   ansible-playbook playbooks/linux-client.yml
+#   ansible-playbook playbooks/linux-client.yml --limit client01
+
+- name: Configure Linux client hosts
+  hosts: "{{ target | default('role_client') }}"
+  gather_facts: true
+  become: true
+  vars:
+    client_packages: [cifs-utils, curl, vim]
+  tasks:
+    - name: Install client packages (Debian family)
+      ansible.builtin.apt:
+        name: "{{ client_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Install client packages (RedHat family)
+      ansible.builtin.dnf:
+        name: "{{ client_packages }}"
+        state: present
+      when: ansible_os_family == "RedHat"

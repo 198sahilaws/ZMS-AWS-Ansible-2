@@ -37,9 +37,9 @@
           var.domain_join_username and var.domain_join_password in terraform.tfvars.
       no_log: true
 
-    - name: Skip domain controllers (they are already the domain)
+    - name: Skip domain controllers and RODCs (promoted, not member-joined)
       ansible.builtin.meta: end_host
-      when: "'role_dc' in group_names"
+      when: "'role_dc' in group_names or 'role_rodc' in group_names"
 
     - name: Point DNS at the domain controller (needed to resolve the domain)
       ansible.windows.win_dns_client:

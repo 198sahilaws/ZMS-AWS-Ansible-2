@@ -11,7 +11,7 @@
 #   ansible-playbook playbooks/windows-share.yml --limit win-fs01
 
 - name: Create a read-only network share
-  hosts: "{{ target | default('role_fileserver') }}"
+  hosts: "{{ target | default('role_fileshare') }}"
   gather_facts: false
   vars:
     share_name: data

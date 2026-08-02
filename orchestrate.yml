@@ -1,0 +1,37 @@
+---
+# Full estate convergence, in dependency order. This is what the ansible-estate
+# systemd timer runs (not site.yml, which is baseline only).
+#
+#   ansible-playbook orchestrate.yml
+#   ansible-playbook orchestrate.yml -e rolling_batch=25% -e max_fail_pct=20
+#
+# Order matters:
+#   1. Baseline on every host (site.yml).
+#   2. ALL Linux role services first — they are independent of Windows, so a
+#      WinRM/AD hiccup must not abort them.
+#   3. The Windows AD chain last: promote the forest, join members, then role
+#      services. Playbooks whose role group is absent are harmless no-ops
+#      ("skipping: no hosts matched").
+
+# --- 1. Baseline (Linux + Windows) ------------------------------------------
+- import_playbook: site.yml
+
+# --- 2. Linux role services -------------------------------------------------
+- import_playbook: playbooks/ubuntu-setup.yml
+- import_playbook: playbooks/amazonlinux-setup.yml
+- import_playbook: playbooks/ubuntu-apache2.yml
+- import_playbook: playbooks/amazonlinux-httpd.yml
+- import_playbook: playbooks/ubuntu-mysql.yml
+- import_playbook: playbooks/amazonlinux-mysql.yml
+- import_playbook: playbooks/linux-fileshare.yml
+- import_playbook: playbooks/linux-client.yml
+
+# --- 3. Windows AD chain (forest -> members -> RODC -> services) -------------
+- import_playbook: playbooks/windows-adds.yml
+- import_playbook: playbooks/windows-domain-join.yml
+- import_playbook: playbooks/windows-rodc.yml
+- import_playbook: playbooks/windows-iis.yml
+- import_playbook: playbooks/windows-share.yml
+- import_playbook: playbooks/windows-python.yml
+- import_playbook: playbooks/windows-zms-enforcer.yml
+- import_playbook: playbooks/windows-client.yml

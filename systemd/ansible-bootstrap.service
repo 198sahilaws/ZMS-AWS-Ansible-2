@@ -8,6 +8,8 @@ Type=oneshot
 User=ubuntu
 WorkingDirectory=/opt/control-repo
 EnvironmentFile=/etc/ansible/estate.env
-ExecStart=/opt/control-repo/scripts/reconverge.sh
+# Invoke via /bin/bash so a lost execute bit (e.g. after a fresh git clone on a
+# filesystem that dropped the mode) can't cause a systemd 203/EXEC failure.
+ExecStart=/bin/bash /opt/control-repo/scripts/reconverge.sh
 # Record result to /var/log/ansible and alert on failure.
-ExecStopPost=/opt/control-repo/scripts/notify-result.sh bootstrap
+ExecStopPost=/bin/bash /opt/control-repo/scripts/notify-result.sh bootstrap
