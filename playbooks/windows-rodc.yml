@@ -13,9 +13,16 @@
   gather_facts: true
   vars:
     ad_domain_name: alcor.co.in
-    # Writable DC private IP so the RODC can find the domain. Leave empty if the
-    # VPC DHCP option set already serves the DC as DNS.
-    domain_dns_server: ""
+    # Writable DC private IP, auto-discovered from the inventory (the role_dc
+    # group; its inventory hostname IS the private IP).
+    #
+    # This MUST be set or the join fails with "The specified domain either does
+    # not exist or could not be contacted": AD domain join resolves the domain via
+    # SRV records (_ldap._tcp.dc._msdcs.<domain>) that ONLY the domain
+    # controller's own DNS serves. AmazonProvidedDNS does not have them, and the
+    # Route 53 private zone holds plain A records, not AD service records.
+    # Override with -e domain_dns_server=<ip> if the DC is outside this inventory.
+    domain_dns_server: "{{ (groups['role_dc'] | default([]) | first) | default('', true) }}"
     # Credentials from the consolidated secret, resolved field-scoped and inline.
     domain_admin_user: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).domain_join_username }}"
     domain_admin_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).domain_join_password }}"
@@ -36,12 +43,33 @@
           in terraform.tfvars (written to the consolidated secret) before promoting an RODC.
       no_log: true
 
+    - name: Fail early if no domain controller was discovered
+      ansible.builtin.assert:
+        that:
+          - domain_dns_server | length > 0
+        fail_msg: >-
+          No host in the role_dc group, so the DC's DNS address is unknown and the
+          domain join cannot resolve {{ ad_domain_name }}. Ensure windows_server_roles
+          includes a "dc" entry, or pass -e domain_dns_server=<ip>.
+
     - name: Point DNS at the domain controller
       ansible.windows.win_dns_client:
         adapter_names: '*'
         dns_servers:
           - "{{ domain_dns_server }}"
-      when: domain_dns_server | length > 0
+
+    - name: Flush the DNS resolver cache so the new server is used immediately
+      ansible.windows.win_command: ipconfig /flushdns
+      changed_when: false
+
+    # The DC may still be completing promotion (AD DS + DNS starting) when this
+    # play runs, so wait for its LDAP port rather than failing the join outright.
+    - name: Wait for the domain controller to serve LDAP
+      ansible.windows.win_wait_for:
+        host: "{{ domain_dns_server }}"
+        port: 389
+        timeout: 600
+        state: started
 
     - name: Join the domain as a member (prerequisite for promotion)
       microsoft.ad.membership:
@@ -50,6 +78,10 @@
         domain_admin_password: "{{ domain_admin_password }}"
         state: domain
         reboot: true
+      register: rodc_join
+      until: rodc_join is succeeded
+      retries: 5
+      delay: 60
       no_log: true
 
     - name: Promote to a read-only domain controller

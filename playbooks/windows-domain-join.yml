@@ -17,9 +17,13 @@
   gather_facts: true
   vars:
     ad_domain_name: alcor.co.in
-    # Point this at the DC's private IP so the host can resolve the domain.
-    # Leave empty if the VPC DHCP option set already serves the DC as DNS.
-    domain_dns_server: ""
+    # DC private IP, auto-discovered from the inventory (role_dc group; its
+    # inventory hostname IS the private IP). Required: AD join resolves the domain
+    # via SRV records (_ldap._tcp.dc._msdcs.<domain>) that only the DC's own DNS
+    # serves — AmazonProvidedDNS does not have them, and the Route 53 private zone
+    # holds plain A records, not AD service records.
+    # Override with -e domain_dns_server=<ip> if the DC is outside this inventory.
+    domain_dns_server: "{{ (groups['role_dc'] | default([]) | first) | default('', true) }}"
     # Optional: place the computer object in a specific OU, e.g.
     #   ou_path: "OU=Servers,DC=alcor,DC=co,DC=in"
     ou_path: ""
@@ -46,12 +50,31 @@
       ansible.builtin.meta: end_host
       when: "'role_dc' in group_names or 'role_rodc' in group_names"
 
+    - name: Fail early if no domain controller was discovered
+      ansible.builtin.assert:
+        that:
+          - domain_dns_server | length > 0
+        fail_msg: >-
+          No host in the role_dc group, so the DC's DNS address is unknown and the
+          domain join cannot resolve {{ ad_domain_name }}. Ensure windows_server_roles
+          includes a "dc" entry, or pass -e domain_dns_server=<ip>.
+
     - name: Point DNS at the domain controller (needed to resolve the domain)
       ansible.windows.win_dns_client:
         adapter_names: '*'
         dns_servers:
           - "{{ domain_dns_server }}"
-      when: domain_dns_server | length > 0
+
+    - name: Flush the DNS resolver cache so the new server is used immediately
+      ansible.windows.win_command: ipconfig /flushdns
+      changed_when: false
+
+    - name: Wait for the domain controller to serve LDAP
+      ansible.windows.win_wait_for:
+        host: "{{ domain_dns_server }}"
+        port: 389
+        timeout: 600
+        state: started
 
     - name: Join the domain (reboots automatically on change)
       microsoft.ad.membership:
@@ -62,6 +85,9 @@
         state: domain
         reboot: true
       register: join_result
+      until: join_result is succeeded
+      retries: 5
+      delay: 60
 
     - name: Report membership result
       ansible.builtin.debug:
