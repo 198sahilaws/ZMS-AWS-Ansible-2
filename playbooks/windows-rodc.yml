@@ -86,8 +86,11 @@
 
     # The join reboots the host. Promotion must not start until it is fully back
     # and the domain secure channel is usable, or DCPromo fails part-way.
+    # NOTE: use ansible.builtin.wait_for_connection — there is NO
+    # ansible.windows.win_wait_for_connection module. The builtin one is
+    # connection-plugin aware and works over WinRM.
     - name: Wait for the host to come back after the domain-join reboot
-      ansible.windows.win_wait_for_connection:
+      ansible.builtin.wait_for_connection:
         timeout: 600
         sleep: 10
 
