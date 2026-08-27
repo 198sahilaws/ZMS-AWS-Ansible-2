@@ -1,0 +1,30 @@
+---
+# Install Apache and run it as a service on SLES web servers.
+# On SLES the package and the service are both named 'apache2' (as on Debian),
+# but it is installed with zypper, not apt.
+#
+#   ansible-playbook playbooks/sles-apache2.yml
+#   ansible-playbook playbooks/sles-apache2.yml --limit 10.188.10.50
+#   ansible-playbook playbooks/sles-apache2.yml -e target=distro_sles
+
+- name: Install and enable Apache2 (SLES)
+  # Role AND distro intersection: role_web spans Ubuntu, Amazon Linux, SLES and
+  # Windows, so the intersection is required or Apache would be attempted on
+  # DB/client hosts and on non-SLES systems.
+  hosts: "{{ target | default('role_web:&distro_sles') }}"
+  gather_facts: true
+  tasks:
+    - name: Skip non-SUSE hosts
+      ansible.builtin.meta: end_host
+      when: ansible_facts['os_family'] != "Suse"
+
+    - name: Install Apache2
+      community.general.zypper:
+        name: apache2
+        state: present
+
+    - name: Ensure Apache2 is started and enabled at boot
+      ansible.builtin.service:
+        name: apache2
+        state: started
+        enabled: true

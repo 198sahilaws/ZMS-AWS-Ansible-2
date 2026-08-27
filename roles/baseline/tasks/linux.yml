@@ -24,6 +24,12 @@
     allowerasing: true
   when: ansible_facts['os_family'] == "RedHat"
 
+- name: Ensure baseline packages are present (SUSE family)
+  community.general.zypper:
+    name: "{{ baseline_linux_packages }}"
+    state: present
+  when: ansible_facts['os_family'] == "Suse"
+
 - name: Ensure chrony (time sync) is enabled and running
   ansible.builtin.service:
     name: "{{ baseline_chrony_service }}"

@@ -19,10 +19,16 @@
         state: present
         update_cache: true
         cache_valid_time: 3600
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
 
     - name: Install client packages (RedHat family)
       ansible.builtin.dnf:
         name: "{{ client_packages }}"
         state: present
-      when: ansible_os_family == "RedHat"
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Install client packages (SUSE family)
+      community.general.zypper:
+        name: "{{ client_packages }}"
+        state: present
+      when: ansible_facts['os_family'] == "Suse"

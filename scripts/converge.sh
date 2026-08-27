@@ -43,8 +43,10 @@ LINUX_PLAYS=(
   site.yml
   playbooks/ubuntu-apache2.yml
   playbooks/amazonlinux-httpd.yml
+  playbooks/sles-apache2.yml
   playbooks/ubuntu-mysql.yml
   playbooks/amazonlinux-mysql.yml
+  playbooks/sles-mariadb.yml
   playbooks/linux-fileshare.yml
   playbooks/linux-client.yml
 )

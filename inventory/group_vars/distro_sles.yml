@@ -1,0 +1,27 @@
+---
+# Connection + package settings for SLES 15 hosts (inventory group distro_sles,
+# keyed off the Distro tag Terraform sets).
+#
+# ansible_user is set directly here (and NOT in os_linux.yml) so the Distro group
+# is the single source of truth for the login user across the mixed estate — the
+# same pattern as distro_amazon / distro_ubuntu, with no reliance on
+# ansible_group_priority.
+#
+# SUSE public-cloud images use 'ec2-user'; there is no 'sles' account.
+ansible_user: ec2-user
+
+# --- Base-repo-safe package overrides ---------------------------------------
+# The baseline role defaults to [htop, curl, vim], but on SLES 15 `htop` is NOT
+# in the base product — it ships in the SUSE Package Hub extension, which is not
+# enabled by default. Installing it would fail the baseline on every converge.
+#
+# These group_vars override the role defaults (role defaults are the lowest
+# precedence), keeping the SLES baseline to packages present in the base product.
+# If you enable Package Hub on these hosts you can drop these overrides:
+#   SUSEConnect --product PackageHub/15.7/x86_64
+baseline_linux_packages:
+  - curl
+  - vim
+
+# Same reason: site.yml installs `linux_baseline_package | default('htop')`.
+linux_baseline_package: curl

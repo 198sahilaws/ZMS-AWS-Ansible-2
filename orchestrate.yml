@@ -34,8 +34,10 @@
 # --- 2. Linux role services (independent of Windows/AD) ----------------------
 - import_playbook: playbooks/ubuntu-apache2.yml      # role_web  & distro_ubuntu
 - import_playbook: playbooks/amazonlinux-httpd.yml   # role_web  & distro_amazon
+- import_playbook: playbooks/sles-apache2.yml        # role_web  & distro_sles
 - import_playbook: playbooks/ubuntu-mysql.yml        # role_db   & distro_ubuntu
 - import_playbook: playbooks/amazonlinux-mysql.yml   # role_db   & distro_amazon
+- import_playbook: playbooks/sles-mariadb.yml        # role_db   & distro_sles
 - import_playbook: playbooks/linux-fileshare.yml     # role_fileshare & os_linux
 - import_playbook: playbooks/linux-client.yml        # role_client    & os_linux
 
