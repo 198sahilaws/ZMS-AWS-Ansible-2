@@ -28,3 +28,24 @@
         name: apache2
         state: started
         enabled: true
+
+    # SLES 15 enables firewalld by default. Without this the web server installs
+    # and runs but is unreachable from other hosts — a silent functional failure
+    # that looks like a networking or security-group problem. The AWS security
+    # group is the outer control; this opens the host firewall.
+    - name: Detect whether firewalld is active
+      ansible.builtin.command: systemctl is-active firewalld
+      register: sles_firewalld
+      changed_when: false
+      failed_when: false
+
+    - name: Open HTTP/HTTPS in firewalld
+      ansible.posix.firewalld:
+        service: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - http
+        - https
+      when: sles_firewalld.stdout | trim == 'active'

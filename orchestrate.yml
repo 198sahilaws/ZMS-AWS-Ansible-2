@@ -28,6 +28,13 @@
 #  4. Playbooks whose target group is empty are harmless no-ops
 #     ("skipping: no hosts matched").
 
+# --- 0. Interpreter bootstrap (must precede everything) ----------------------
+# RHEL 8 ships Python 3.6, which ansible-core 2.21 cannot use on a managed node.
+# This uses `raw` to install python3.11 before any Python-dependent task — even
+# fact gathering — is attempted. No-op on a converged host and on estates with
+# no RHEL 8 ("skipping: no hosts matched").
+- import_playbook: playbooks/rhel8-python-bootstrap.yml
+
 # --- 1. Baseline on every reachable host ------------------------------------
 - import_playbook: site.yml
 
@@ -35,9 +42,11 @@
 - import_playbook: playbooks/ubuntu-apache2.yml      # role_web  & distro_ubuntu
 - import_playbook: playbooks/amazonlinux-httpd.yml   # role_web  & distro_amazon
 - import_playbook: playbooks/sles-apache2.yml        # role_web  & distro_sles
+- import_playbook: playbooks/rhel-httpd.yml          # role_web  & distro_rhel
 - import_playbook: playbooks/ubuntu-mysql.yml        # role_db   & distro_ubuntu
 - import_playbook: playbooks/amazonlinux-mysql.yml   # role_db   & distro_amazon
 - import_playbook: playbooks/sles-mariadb.yml        # role_db   & distro_sles
+- import_playbook: playbooks/rhel-mariadb.yml        # role_db   & distro_rhel
 - import_playbook: playbooks/linux-fileshare.yml     # role_fileshare & os_linux
 - import_playbook: playbooks/linux-client.yml        # role_client    & os_linux
 

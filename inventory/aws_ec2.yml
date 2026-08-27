@@ -30,6 +30,13 @@ keyed_groups:
   - key: tags.Distro
     prefix: distro
     separator: "_"
+  # OS major version, currently set only by the RHEL module (8/9/10) -> osver_8,
+  # osver_9, osver_10. Lets a single release be targeted without splitting the
+  # distro group:  --limit 'role_web:&osver_8'
+  # Hosts without the tag simply do not join any osver_* group.
+  - key: tags.OSVersion
+    prefix: osver
+    separator: "_"
   - key: tags.Role
     prefix: role
   - key: tags.Environment

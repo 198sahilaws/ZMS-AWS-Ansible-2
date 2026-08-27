@@ -40,13 +40,19 @@ MAX_FAIL_PCT="${MAX_FAIL_PCT:-20}"
 # rules documented there. Full OS upgrades (ubuntu-setup / amazonlinux-setup) are
 # deliberately NOT here: they reboot hosts and belong in a maintenance window.
 LINUX_PLAYS=(
+  # MUST be first: RHEL 8 ships Python 3.6, which ansible-core cannot use on a
+  # managed node. This raw-based playbook installs python3.11 before any
+  # Python-dependent task (including fact gathering) is attempted.
+  playbooks/rhel8-python-bootstrap.yml
   site.yml
   playbooks/ubuntu-apache2.yml
   playbooks/amazonlinux-httpd.yml
   playbooks/sles-apache2.yml
+  playbooks/rhel-httpd.yml
   playbooks/ubuntu-mysql.yml
   playbooks/amazonlinux-mysql.yml
   playbooks/sles-mariadb.yml
+  playbooks/rhel-mariadb.yml
   playbooks/linux-fileshare.yml
   playbooks/linux-client.yml
 )

@@ -11,7 +11,12 @@
   gather_facts: true
   become: true
   vars:
-    client_packages: [cifs-utils, curl, vim]
+    # SMB client tooling only. An editor is deliberately NOT listed here: the
+    # package name differs per distro (vim vs vim-enhanced on RHEL) and the
+    # baseline role already installs one, chosen per-distro via group_vars.
+    # Play vars outrank group_vars, so a distro override of this list would not
+    # take effect — keep it distro-neutral.
+    client_packages: [cifs-utils, curl]
   tasks:
     - name: Install client packages (Debian family)
       ansible.builtin.apt:
@@ -25,6 +30,12 @@
       ansible.builtin.dnf:
         name: "{{ client_packages }}"
         state: present
+        # client_packages includes `curl`, which conflicts with the preinstalled
+        # `curl-minimal` on AL2023 and RHEL 9+. Without allowerasing the whole
+        # task fails ("curl-minimal conflicts with curl") — the same failure the
+        # baseline role hit. Latent until now only because the sole client host
+        # in the default estate is Ubuntu.
+        allowerasing: true
       when: ansible_facts['os_family'] == "RedHat"
 
     - name: Install client packages (SUSE family)

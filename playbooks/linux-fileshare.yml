@@ -33,6 +33,10 @@
       ansible.builtin.dnf:
         name: samba
         state: present
+        # Consistent with the other dnf tasks: dependency resolution can pull a
+        # package that conflicts with the preinstalled curl-minimal on AL2023 /
+        # RHEL 9+. Allow the swap rather than fail the transaction.
+        allowerasing: true
       when: ansible_facts['os_family'] == "RedHat"
 
     - name: Install Samba (SUSE family)
@@ -41,11 +45,53 @@
         state: present
       when: ansible_facts['os_family'] == "Suse"
 
+    - name: Detect SELinux enforcement mode
+      # `getenforce` is absent when SELinux tooling is not installed at all, so
+      # failed_when:false makes "no SELinux" an empty result rather than a failure.
+      ansible.builtin.command: getenforce
+      register: selinux_state
+      changed_when: false
+      failed_when: false
+
     - name: Ensure the share directory exists
       ansible.builtin.file:
         path: "{{ smb_share_path }}"
         state: directory
         mode: "0775"
+
+    # SELinux blocks Samba from serving a directory that is not labelled
+    # samba_share_t. This affects RHEL (SELinux enforcing by default) and
+    # SLES 16 (which switched from AppArmor to SELinux). Ubuntu, Amazon Linux
+    # and SLES 15 are unaffected, so the whole block is gated on the runtime
+    # state rather than on the distro — a host with SELinux disabled skips it.
+    # Without this, smbd starts cleanly and every client gets "permission
+    # denied" — a silent functional failure.
+    - name: Configure SELinux for the Samba share
+      when: selinux_state.stdout | default('') | trim in ['Enforcing', 'Permissive']
+      block:
+        - name: Ensure SELinux policy tooling is present (RedHat family)
+          ansible.builtin.dnf:
+            name: policycoreutils-python-utils
+            state: present
+            allowerasing: true
+          when: ansible_facts['os_family'] == "RedHat"
+
+        - name: Ensure SELinux policy tooling is present (SUSE family)
+          community.general.zypper:
+            name: policycoreutils-python-utils
+            state: present
+          when: ansible_facts['os_family'] == "Suse"
+
+        - name: Label the share directory as samba_share_t
+          community.general.sefcontext:
+            target: "{{ smb_share_path }}(/.*)?"
+            setype: samba_share_t
+            state: present
+
+        - name: Apply the SELinux context to the share directory
+          ansible.builtin.command: "restorecon -R {{ smb_share_path }}"
+          register: smb_restorecon
+          changed_when: smb_restorecon.stdout | default('') | length > 0
 
     - name: Define the share in smb.conf
       ansible.builtin.blockinfile:

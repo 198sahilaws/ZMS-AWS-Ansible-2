@@ -10,6 +10,20 @@
 # SUSE public-cloud images use 'ec2-user'; there is no 'sles' account.
 ansible_user: ec2-user
 
+# COVERS BOTH RELEASES: SLES 15 SP7 and SLES 16 share this group, because zypper,
+# apache2, mariadb and samba behave the same on both. Hosts are additionally
+# placed in osver_15 / osver_16 (from the OSVersion tag) so a single release can
+# be targeted:
+#   ansible-playbook playbooks/sles-apache2.yml --limit 'role_web:&osver_16'
+# Inside a task prefer the fact over the group — it reflects what is installed
+# rather than what Terraform intended:
+#   when: ansible_facts['distribution_major_version'] | int >= 16
+#
+# KNOWN DIFFERENCE — SELinux. SLES 15 uses AppArmor; SLES 16 ships SELinux
+# enforcing by default. That does not affect apache2 or mariadb on default
+# paths, but a Samba share outside the standard directories needs an SELinux
+# context on SLES 16 (as on RHEL). See the note in playbooks/linux-fileshare.yml.
+
 # --- Base-repo-safe package overrides ---------------------------------------
 # The baseline role defaults to [htop, curl, vim], but on SLES 15 `htop` is NOT
 # in the base product — it ships in the SUSE Package Hub extension, which is not
@@ -22,6 +36,12 @@ ansible_user: ec2-user
 baseline_linux_packages:
   - curl
   - vim
+  # chrony is listed explicitly because the baseline role only STARTS the
+  # chronyd service — it never installs it. That is safe on the Ubuntu and
+  # Amazon Linux AMIs (which ship chrony), but must not be assumed here: a
+  # missing unit fails the task with "Could not find the requested service".
+  # The package task runs before the service task, so this guarantees ordering.
+  - chrony
 
 # Same reason: site.yml installs `linux_baseline_package | default('htop')`.
 linux_baseline_package: curl

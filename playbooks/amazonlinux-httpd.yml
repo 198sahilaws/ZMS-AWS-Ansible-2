@@ -19,6 +19,10 @@
       ansible.builtin.dnf:
         name: httpd
         state: present
+        # Consistent with rhel-httpd.yml and the baseline role: dependency
+        # resolution can pull a package conflicting with the preinstalled
+        # curl-minimal on AL2023. Allow the swap rather than fail.
+        allowerasing: true
 
     - name: Ensure httpd is started and enabled at boot
       ansible.builtin.service:
