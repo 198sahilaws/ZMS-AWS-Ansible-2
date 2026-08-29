@@ -63,3 +63,64 @@
       until: adws is succeeded
       retries: 30
       delay: 20
+
+    # WHY THIS EXISTS
+    # Promoting the FIRST DC of a new forest migrates the server's local SAM
+    # accounts into the new directory, so local 'zsroot' becomes ALCOR\zsroot.
+    # But membership of the LOCAL Administrators group does NOT carry over into
+    # Domain Admins - the migrated account lands as an ordinary domain user that
+    # happens to sit in BUILTIN\Administrators on this DC.
+    #
+    # That is enough for most things, which is why this went unnoticed:
+    #   - WinRM management of the DC          -> works (BUILTIN\Administrators)
+    #   - joining a member server to the domain -> works (any authenticated user
+    #     may join up to ms-DS-MachineAccountQuota = 10 computers)
+    #   - promoting a READ-ONLY DC            -> FAILS, because
+    #     Install-ADDSDomainController explicitly verifies Domain Admins or
+    #     Enterprise Admins membership and refuses otherwise:
+    #       "Verification of user credential permissions failed. You have not
+    #        supplied user credentials that belong to the Domain Admins group
+    #        or the Enterprise Admins group."
+    #
+    # So windows-rodc.yml can never succeed unless this runs first. It is placed
+    # here (not in windows-rodc.yml) because it must happen on the forest root
+    # DC, and because orchestrate.yml runs windows-adds.yml before windows-rodc.yml.
+    #
+    # This works without any additional credentials because BUILTIN\Administrators
+    # on a DC may modify group membership - the account elevates itself once.
+    # Idempotent: re-running is a no-op when the account is already a member.
+    - name: Ensure the Ansible account is a Domain Admin (required to promote RODCs)
+      microsoft.ad.group:
+        name: Domain Admins
+        scope: global
+        state: present
+        members:
+          add:
+            - "{{ ansible_user | regex_replace('^.*[\\\\]', '') }}"
+      register: da_member
+      until: da_member is succeeded
+      retries: 5
+      delay: 15
+
+    # Enterprise Admins exists only in the FOREST ROOT domain, which is what this
+    # play creates. Needed for forest-wide operations such as adprep/rodcprep,
+    # which RODC promotion triggers on first use.
+    - name: Ensure the Ansible account is an Enterprise Admin (forest-wide operations)
+      microsoft.ad.group:
+        name: Enterprise Admins
+        scope: universal
+        state: present
+        members:
+          add:
+            - "{{ ansible_user | regex_replace('^.*[\\\\]', '') }}"
+      register: ea_member
+      until: ea_member is succeeded
+      retries: 5
+      delay: 15
+
+    # Group membership is only re-evaluated when a new token is issued, so the
+    # elevation above does not affect the CURRENT WinRM session. Dropping the
+    # connection forces the next task (and windows-rodc.yml) to authenticate
+    # afresh and pick up the new privileges.
+    - name: Reset the connection so the new group membership takes effect
+      ansible.builtin.meta: reset_connection
