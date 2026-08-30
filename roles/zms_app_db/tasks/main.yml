@@ -1,0 +1,171 @@
+---
+# Prepare this MariaDB host for whichever ZMS schemas are mapped to it.
+#
+# The mapping lives in vars/zms-app.yml. A host that owns no schema ends here,
+# which is how the Ubuntu database host (Oracle MySQL, not MariaDB) is skipped
+# without a special case.
+
+- name: Work out which schemas this host owns
+  ansible.builtin.set_fact:
+    zms_my_schemas: >-
+      {{ zms_app_services | dict2items
+         | selectattr('value.db_distro_group', 'in', group_names)
+         | list }}
+
+- name: Skip hosts with no ZMS schema mapped to them
+  ansible.builtin.meta: end_host
+  when: zms_my_schemas | length == 0
+
+- name: Resolve the family-specific paths
+  ansible.builtin.set_fact:
+    zms_db_confdir: >-
+      {{ zms_app_db_confdir_redhat if ansible_facts['os_family'] == 'RedHat'
+         else zms_app_db_confdir_suse if ansible_facts['os_family'] == 'Suse'
+         else zms_app_db_confdir_debian }}
+    zms_db_socket: >-
+      {{ zms_app_db_socket_redhat if ansible_facts['os_family'] == 'RedHat'
+         else zms_app_db_socket_suse if ansible_facts['os_family'] == 'Suse'
+         else zms_app_db_socket_debian }}
+
+# noqa command-instead-of-module -- a read-only existence check. The service
+# module would try to START mariadb, which is exactly what we must not do
+# before knowing whether the distro playbook has installed it.
+- name: Confirm MariaDB is installed on this host # noqa command-instead-of-module
+  ansible.builtin.command: systemctl cat mariadb.service
+  register: zms_mariadb_unit
+  changed_when: false
+  failed_when: false
+
+- name: Fail with an actionable message when MariaDB is missing
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} is mapped to schema(s)
+      {{ zms_my_schemas | map(attribute='value.db_name') | join(', ') }}
+      but has no mariadb.service. Run the matching distro playbook first
+      (playbooks/amazonlinux-mysql.yml, sles-mariadb.yml or rhel-mariadb.yml),
+      or point that service at a different db_distro_group in vars/zms-app.yml.
+  when: zms_mariadb_unit.rc != 0
+
+# community.mysql needs a Python MySQL client ON THE MANAGED HOST. The existing
+# *-mariadb playbooks install it, but this role must stand alone — the same
+# best-effort-then-pip pattern they use, for the same reason: the package is
+# named differently on every distro and is absent from some repos.
+- name: Check whether the Python MySQL client is importable
+  ansible.builtin.command: python3 -c "import pymysql"
+  register: zms_pymysql
+  changed_when: false
+  failed_when: false
+
+- name: Install a Python MySQL client from the distro repos (best effort)
+  ansible.builtin.package:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - python3-PyMySQL
+    - python3-pymysql
+  failed_when: false
+  when: zms_pymysql.rc != 0
+
+- name: Re-check the Python MySQL client
+  ansible.builtin.command: python3 -c "import pymysql"
+  register: zms_pymysql2
+  changed_when: false
+  failed_when: false
+  when: zms_pymysql.rc != 0
+
+- name: Install PyMySQL from pip as a last resort
+  ansible.builtin.pip:
+    name: PyMySQL
+    state: present
+    extra_args: "--break-system-packages"
+  failed_when: false
+  when:
+    - zms_pymysql.rc != 0
+    - zms_pymysql2.rc | default(1) != 0
+
+- name: Install the ZMS MariaDB drop-in configuration
+  ansible.builtin.template:
+    src: 99-zms-app.cnf.j2
+    dest: "{{ zms_db_confdir }}/99-zms-app.cnf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart mariadb
+
+- name: Ensure MariaDB is running and enabled
+  ansible.builtin.service:
+    name: mariadb
+    state: started
+    enabled: true
+
+# Restart now if the drop-in changed, so the grants below are created against
+# the server that will actually be serving.
+- name: Apply the configuration change
+  ansible.builtin.meta: flush_handlers
+
+- name: Create the application schemas
+  community.mysql.mysql_db:
+    name: "{{ item.value.db_name }}"
+    state: present
+    encoding: utf8mb4
+    collation: utf8mb4_unicode_ci
+    login_user: root
+    login_password: "{{ zms_mysql_root_password }}"
+    login_unix_socket: "{{ zms_db_socket }}"
+    check_implicit_admin: true
+  loop: "{{ zms_my_schemas }}"
+  loop_control:
+    label: "{{ item.value.db_name }}"
+  no_log: true
+
+# One account per host, scoped to the VPC address pattern and to this host's
+# schemas only. Not root, and not '%': the grant is the boundary that stops
+# catalog-svc reading orders data even if someone points it at the wrong host.
+- name: Create the application account and grant it only its own schemas
+  community.mysql.mysql_user:
+    name: "{{ zms_app_db_user }}"
+    host: "{{ zms_app_db_client_pattern }}"
+    password: "{{ zms_app_db_password }}"
+    plugin: mysql_native_password
+    # -> "zms_catalog.*:ALL" (one entry per schema this host owns, joined by /)
+    priv: >-
+      {{ zms_my_schemas | map(attribute='value.db_name')
+         | map('regex_replace', '^(.*)$', '\\1.*:ALL') | join('/') }}
+    state: present
+    login_user: root
+    login_password: "{{ zms_mysql_root_password }}"
+    login_unix_socket: "{{ zms_db_socket }}"
+    check_implicit_admin: true
+  no_log: true
+
+- name: Detect whether firewalld is active # noqa command-instead-of-module
+  ansible.builtin.command: systemctl is-active firewalld
+  register: zms_db_firewalld
+  changed_when: false
+  failed_when: false
+
+- name: Open the MariaDB port in firewalld
+  ansible.posix.firewalld:
+    port: "{{ zms_app_db_port }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  when: zms_db_firewalld.stdout | trim == 'active'
+
+- name: Confirm MariaDB is listening on a non-loopback address
+  ansible.builtin.shell: |
+    set -o pipefail
+    (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | awk '{print $4}' | grep -E ':{{ zms_app_db_port }}$'
+  args:
+    executable: /bin/bash
+  register: zms_db_listen
+  changed_when: false
+  failed_when: false
+
+- name: Report the prepared schemas
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} ({{ ansible_facts['distribution'] }}) serving
+      {{ zms_my_schemas | map(attribute='value.db_name') | join(', ') }}
+      to '{{ zms_app_db_user }}'@'{{ zms_app_db_client_pattern }}';
+      listening on {{ zms_db_listen.stdout_lines | default(['unknown']) | join(', ') }}

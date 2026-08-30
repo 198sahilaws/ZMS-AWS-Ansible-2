@@ -1,0 +1,200 @@
+---
+# Deploy ONE microservice to this host. Which one is decided by the calling
+# playbook from the distro group the host belongs to (see vars/zms-app.yml).
+#
+# The payload is identical on all four hosts. Only /etc/zms-app/<service>.env
+# and the systemd unit differ, which is what makes "deploy the app" a single
+# role instead of four.
+
+- name: Validate the service assignment
+  ansible.builtin.assert:
+    that:
+      - zms_service_name | length > 0
+      - zms_service_name in ['catalog', 'inventory', 'orders', 'storefront']
+      - zms_service_spec.port is defined
+    fail_msg: >-
+      zms_service_name / zms_service_spec were not passed correctly.
+      Got name='{{ zms_service_name }}', spec={{ zms_service_spec }}.
+    quiet: true
+
+- name: Resolve whether this service owns a database
+  ansible.builtin.set_fact:
+    zms_service_has_db: "{{ (zms_service_spec.db_distro_group | default('')) | length > 0 }}"
+
+- name: Resolve this service's database host from the dynamic inventory
+  ansible.builtin.set_fact:
+    zms_db_host: >-
+      {{ (groups[zms_app_db_group] | default([])
+          | intersect(groups[zms_service_spec.db_distro_group] | default([])))
+         | first | default('') }}
+  when: zms_service_has_db | bool
+
+- name: Fail early when the database host cannot be discovered
+  ansible.builtin.fail:
+    msg: >-
+      {{ zms_service_name }} is mapped to a database on
+      '{{ zms_service_spec.db_distro_group }}', but no host is in both
+      '{{ zms_app_db_group }}' and that group. Check the Role/Distro tags on the
+      instances, and that `ansible-inventory --graph` shows both groups.
+  when:
+    - zms_service_has_db | bool
+    - zms_db_host | length == 0
+
+- name: Ensure a usable Python interpreter
+  ansible.builtin.include_tasks: python.yml
+
+- name: Create the service group
+  ansible.builtin.group:
+    name: "{{ zms_app_group }}"
+    system: true
+    state: present
+
+- name: Create the service account
+  ansible.builtin.user:
+    name: "{{ zms_app_user }}"
+    group: "{{ zms_app_group }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ zms_app_root }}"
+    create_home: false
+    state: present
+
+- name: Create application directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ zms_app_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ zms_app_root }}"
+      mode: "0755"
+    - path: "{{ zms_app_root }}/src"
+      mode: "0755"
+    - path: "{{ zms_app_config_dir }}"
+      mode: "0750"
+    - path: "{{ zms_app_log_dir }}"
+      mode: "0755"
+      owner: "{{ zms_app_user }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Deploy the application payload
+  ansible.builtin.copy:
+    src: app/
+    dest: "{{ zms_app_root }}/src/"
+    owner: root
+    group: "{{ zms_app_group }}"
+    mode: "0644"
+    directory_mode: "0755"
+  register: zms_payload
+  notify: restart zms service
+
+# Deliberately NOT the distro's python3-flask package: the versions differ by
+# years across four distros. A virtualenv per host means every service in the
+# estate runs the same Flask, and an upgrade is a requirements.txt edit.
+- name: Create the virtualenv
+  ansible.builtin.command:
+    cmd: "{{ zms_python }} -m venv {{ zms_app_root }}/venv"
+    creates: "{{ zms_app_root }}/venv/bin/python"
+
+- name: Ensure pip exists inside the virtualenv
+  ansible.builtin.command:
+    cmd: "{{ zms_app_root }}/venv/bin/python -m ensurepip --upgrade"
+  register: zms_ensurepip
+  changed_when: false
+  failed_when: false
+
+- name: Install the Python dependencies
+  ansible.builtin.pip:
+    requirements: "{{ zms_app_root }}/src/requirements.txt"
+    executable: "{{ zms_app_root }}/venv/bin/pip"
+    state: present
+  register: zms_pip
+  # Wheels come from PyPI over the NAT gateway. Retry rather than fail the
+  # converge on a single flaky fetch.
+  retries: 3
+  delay: 5
+  until: zms_pip is succeeded
+  notify: restart zms service
+
+- name: Write the service environment file
+  ansible.builtin.template:
+    src: service.env.j2
+    dest: "{{ zms_app_config_dir }}/{{ zms_service_name }}.env"
+    owner: root
+    group: "{{ zms_app_group }}"
+    # 0640: it holds the MariaDB application password. Readable by the service
+    # account, by nobody else.
+    mode: "0640"
+  no_log: true
+  notify: restart zms service
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: zms-service.service.j2
+    dest: "/etc/systemd/system/zms-{{ zms_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart zms service
+
+- name: Start and enable the service
+  ansible.builtin.systemd:
+    name: "zms-{{ zms_service_name }}.service"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# Apply any pending restart NOW, before the health gate below decides whether
+# this deploy worked. Without this the probe can pass against the old process.
+- name: Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Open the service port in firewalld
+  ansible.builtin.include_tasks: firewall.yml
+
+- name: Seed the database with fake data
+  ansible.builtin.include_tasks: seed.yml
+  when: zms_service_has_db | bool
+
+- name: Install the order traffic generator
+  ansible.builtin.include_tasks: generator.yml
+  when:
+    - zms_service_name == 'orders'
+    - zms_app_generator_enabled | bool
+
+- name: Wait for the service to answer its health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ zms_service_spec.port }}/health"
+    status_code: [200, 503]
+    timeout: 5
+    return_content: true
+  register: zms_health
+  retries: "{{ zms_app_health_retries }}"
+  delay: "{{ zms_app_health_delay }}"
+  until: zms_health.status in [200, 503]
+  changed_when: false
+
+# A 503 means the process is alive but its database is not reachable — the most
+# common outcome of a half-finished lab. Say so precisely instead of leaving a
+# green converge and a broken page.
+- name: Report a service that is up but cannot reach its database
+  ansible.builtin.fail:
+    msg: >-
+      zms-{{ zms_service_name }} is running on {{ inventory_hostname }} but
+      cannot reach {{ zms_db_host }}:3306/{{ zms_service_spec.db_name }}.
+      Run playbooks/zms-app-db.yml first, then check MariaDB's bind-address and
+      that the '{{ zms_app_db_user }}'@'{{ zms_app_db_client_pattern }}' grant
+      exists. Service said: {{ (zms_health.content | from_json).database.error
+      | default('no detail') }}
+  when:
+    - zms_service_has_db | bool
+    - zms_health.status == 503
+
+- name: Summarise the deployment
+  ansible.builtin.debug:
+    msg: >-
+      {{ zms_service_name }} v{{ zms_app_version }} listening on
+      {{ ansible_facts['default_ipv4']['address'] | default(inventory_hostname) }}:{{ zms_service_spec.port }}
+      {% if zms_service_has_db | bool %}-> {{ zms_service_spec.db_name }}@{{ zms_db_host }}{% endif %}

@@ -1,0 +1,7 @@
+---
+- name: Restart zms service
+  ansible.builtin.systemd:
+    name: "zms-{{ zms_service_name }}.service"
+    state: restarted
+    daemon_reload: true
+  listen: restart zms service

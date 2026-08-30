@@ -50,6 +50,32 @@
 - import_playbook: playbooks/linux-fileshare.yml     # role_fileshare & os_linux
 - import_playbook: playbooks/linux-client.yml        # role_client    & os_linux
 
+# --- 2b. ZMS microservices demo application ---------------------------------
+# Runs AFTER the MariaDB playbooks above, because zms-app-db.yml expects
+# mariadb.service to already exist on the hosts it prepares.
+#
+# Order matters and is enforced by content, not just by position: the services
+# playbook fails its health gate with a readable message if the databases were
+# not prepared first, rather than leaving a green run and a broken page.
+#
+# All three are idempotent and quick on a converged estate (the seeder no-ops
+# once rows exist, pip no-ops once the venv is built), so they are safe to run
+# unattended.
+#
+# IMPORTANT -- LISTING THEM HERE IS NOT ENOUGH TO SCHEDULE THEM. The hourly
+# ansible-estate timer does NOT run this file: it runs scripts/converge.sh,
+# which iterates its own LINUX_PLAYS / WINDOWS_PLAYS arrays so that one failing
+# playbook cannot abort the rest. A playbook added here but not to that array
+# runs only when someone invokes orchestrate.yml by hand. These three are in
+# both. Keep the two lists in step.
+#
+# To stop deploying the demo app on a schedule, remove the three entries from
+# scripts/converge.sh (removing them here only affects manual runs); nothing
+# else depends on them.
+- import_playbook: playbooks/zms-app-db.yml          # role_db  (3 MariaDB hosts)
+- import_playbook: playbooks/zms-app-services.yml    # role_web (catalog/inventory/orders)
+- import_playbook: playbooks/zms-app-frontend.yml    # role_web & distro_sles (storefront)
+
 # --- 3. Windows AD chain (forest -> members -> RODC -> services) -------------
 - import_playbook: playbooks/windows-adds.yml        # role_dc
 - import_playbook: playbooks/windows-domain-join.yml # os_windows (skips DC/RODC)

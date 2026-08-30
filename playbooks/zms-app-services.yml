@@ -1,0 +1,49 @@
+---
+# ZMS microservices lab — STEP 2 of 3: deploy the three microservices.
+#
+#   ansible-playbook playbooks/zms-app-services.yml
+#   ansible-playbook playbooks/zms-app-services.yml --limit 'role_web:&distro_rhel'
+#   ansible-playbook playbooks/zms-app-services.yml -e zms_app_version=1.0.1
+#
+# ONE PLAY, THREE SERVICES. The play targets role_web and each host works out
+# which service it runs from the distro group it is in — so catalog lands on the
+# Ubuntu web host, inventory on Amazon Linux, orders on RHEL, and the SLES web
+# host (the storefront's home) ends the play here. Moving a service to a
+# different host is an edit to vars/zms-app.yml and nothing else.
+#
+# Run playbooks/zms-app-db.yml first. If you do not, this still completes: the
+# services install and start, and the play fails at the health gate with a
+# message naming the database host it could not reach.
+
+- name: Deploy the ZMS microservices
+  hosts: "{{ target | default('role_web') }}"
+  gather_facts: true
+  vars_files:
+    - ../vars/zms-app.yml
+  vars:
+    zms_mysql_root_password: >-
+      {{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region)
+          | from_json).mysql_root_password | default('', true) }}
+    zms_app_db_password: "{{ zms_app_db_password_override | default(zms_mysql_root_password, true) }}"
+  pre_tasks:
+    - name: Skip non-Linux hosts
+      ansible.builtin.meta: end_host
+      when: ansible_facts['system'] | default('') != 'Linux'
+
+    - name: Work out which microservice this host runs
+      ansible.builtin.set_fact:
+        zms_assignment: "{{ item }}"
+      loop: "{{ zms_app_services | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: item.value.app_distro_group in group_names
+
+    - name: Leave web hosts that run no microservice alone
+      ansible.builtin.meta: end_host
+      when: zms_assignment is not defined
+  roles:
+    - role: zms_microservice
+      vars:
+        zms_service_name: "{{ zms_assignment.key }}"
+        zms_service_spec: "{{ zms_assignment.value }}"
+      tags: [zms-app, zms-app-services]

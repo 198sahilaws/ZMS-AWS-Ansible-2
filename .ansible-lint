@@ -4,3 +4,17 @@ exclude_paths:
   - collections/
   - .github/
   - .cache/
+  # deploy/ansible-control-cloud-init.yaml is a Terraform TEMPLATE, not an
+  # Ansible file: it contains ${...} interpolations that are substituted at
+  # apply time, so linting it as YAML/Ansible is meaningless and noisy.
+  - deploy/
+
+skip_list:
+  # Role variables here are deliberately NOT prefixed with the role name.
+  # vars/zms-app.yml is the single source of truth for the demo application's
+  # topology and is loaded by three playbooks that hand the same values to two
+  # different roles (zms_app_db and zms_microservice). Prefixing would mean
+  # duplicating every value per role, which defeats the point of one map. The
+  # rest of var-naming (invalid characters, Python keywords, shadowed facts)
+  # still applies -- only the role-prefix sub-rule is skipped.
+  - var-naming[no-role-prefix]

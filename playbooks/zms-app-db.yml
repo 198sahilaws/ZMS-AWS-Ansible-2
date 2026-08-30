@@ -1,0 +1,54 @@
+---
+# ZMS microservices lab — STEP 1 of 3: prepare the MariaDB hosts.
+#
+#   ansible-playbook playbooks/zms-app-db.yml
+#   ansible-playbook playbooks/zms-app-db.yml --limit 10.188.10.113
+#   ansible-playbook playbooks/zms-app-db.yml --check --diff
+#
+# WHAT IT DOES. For every host in role_db that vars/zms-app.yml maps a schema
+# to: makes MariaDB listen on the VPC address, creates the schema, and creates
+# one application account scoped to that schema and to the VPC address pattern.
+#
+# WHICH HOSTS. Three of the four database hosts — Amazon Linux (zms_catalog),
+# SLES (zms_inventory) and RHEL (zms_orders). The Ubuntu database host runs
+# Oracle MySQL from playbooks/ubuntu-mysql.yml and no schema is mapped to it, so
+# it ends the play untouched. That is a mapping decision in vars/zms-app.yml,
+# not a special case in this file.
+#
+# RUN ORDER. The distro MariaDB playbooks must have run first (they install the
+# server and set the root password); this playbook assumes mariadb.service
+# exists and fails with an explicit message if it does not.
+
+- name: Prepare the MariaDB hosts for the ZMS microservices
+  hosts: "{{ target | default('role_db') }}"
+  gather_facts: true
+  vars_files:
+    - ../vars/zms-app.yml
+  vars:
+    # Field-scoped inline, per the note in inventory/group_vars/all.yml: never
+    # bind the whole credentials document to a variable.
+    zms_mysql_root_password: >-
+      {{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region)
+          | from_json).mysql_root_password | default('', true) }}
+    # The application account's password. It defaults to the same value as the
+    # MariaDB root password because that is the only credential Terraform puts
+    # in the consolidated secret, and adding a field would mean a Terraform
+    # change. The ACCOUNT is still separate and still limited to one schema.
+    # To give it its own password without touching Terraform:
+    #   ansible-playbook playbooks/zms-app-db.yml -e zms_app_db_password_override='...'
+    # and pass the same value to playbooks/zms-app-services.yml.
+    zms_app_db_password: "{{ zms_app_db_password_override | default(zms_mysql_root_password, true) }}"
+  pre_tasks:
+    - name: Assert a database password is available
+      ansible.builtin.assert:
+        that:
+          - zms_app_db_password | length > 0
+        fail_msg: >-
+          No password available for the application account. Either
+          populate_ansible_secret is false in terraform.tfvars, or the
+          consolidated secret has no mysql_root_password field. Pass one with
+          -e zms_app_db_password_override='...' to proceed.
+        quiet: true
+  roles:
+    - role: zms_app_db
+      tags: [zms-app, zms-app-db]

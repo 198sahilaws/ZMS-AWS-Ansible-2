@@ -1,0 +1,119 @@
+---
+# ZMS Microservices Lab — topology and deployment settings.
+#
+# SINGLE SOURCE OF TRUTH for the demo application. Every zms-app-*.yml playbook
+# loads this file via `vars_files`, so the service/host/database map is declared
+# once and nothing is hardcoded in a task, template or unit file.
+#
+# WHY GROUP NAMES AND NOT IP ADDRESSES
+# The estate is discovered dynamically (inventory/aws_ec2.yml, hostnames =
+# private-ip-address), so an instance replacement changes every private IP. The
+# map below therefore names INVENTORY GROUPS, and each play resolves the group
+# intersection to an address at run time:
+#
+#     groups['role_web'] | intersect(groups['distro_ubuntu']) | first
+#
+# Re-run Terraform, get new IPs, converge again — the map still holds.
+#
+# TOPOLOGY (as deployed by these playbooks)
+#
+#   service        app host (role_web)   port   database host (role_db)   schema
+#   -------------  --------------------  -----  ------------------------  -------------
+#   catalog        distro_ubuntu         8001   distro_amazon             zms_catalog
+#   inventory      distro_amazon         8002   distro_sles               zms_inventory
+#   orders         distro_rhel           8003   distro_rhel               zms_orders
+#   storefront     distro_sles           8080   (none — calls the three)
+#
+# Every service crosses a distro boundary on the way to its database, which is
+# the point of the lab: it exercises real TCP between hosts rather than a
+# loopback connection that would work even if the estate were one box.
+#
+# NOTE ON THE UBUNTU DB HOST: playbooks/ubuntu-mysql.yml installs ORACLE MySQL
+# there, not MariaDB. This application is MariaDB-only, so distro_ubuntu is
+# deliberately absent from every db_distro_group below and that host is left
+# untouched. To bring it in, install MariaDB there instead and point a service
+# at it.
+
+# --- Placement -------------------------------------------------------------
+
+# The three data-owning microservices. Each one owns its schema outright: no
+# service reads another service's database, and there are no cross-database
+# joins anywhere. All stitching happens in the storefront (and in orders-svc)
+# over HTTP.
+zms_app_services:
+  catalog:
+    port: 8001
+    description: Product master data — SKUs, categories, prices.
+    app_distro_group: distro_ubuntu
+    db_distro_group: distro_amazon
+    db_name: zms_catalog
+  inventory:
+    port: 8002
+    description: Stock on hand per product per warehouse.
+    app_distro_group: distro_amazon
+    db_distro_group: distro_sles
+    db_name: zms_inventory
+  orders:
+    port: 8003
+    description: Customer orders and order lines; calls catalog and inventory.
+    app_distro_group: distro_rhel
+    db_distro_group: distro_rhel
+    db_name: zms_orders
+
+# The web front end. Holds NO database of its own — every number it renders is
+# fetched from the three services above and stitched in memory.
+zms_app_frontend:
+  name: storefront
+  port: 8080
+  description: Backend-for-frontend; fans out to all three microservices.
+  app_distro_group: distro_sles
+
+# Inventory group that identifies application hosts and database hosts. Both are
+# intersected with the distro groups above.
+zms_app_web_group: role_web
+zms_app_db_group: role_db
+
+# --- Deployment paths ------------------------------------------------------
+
+zms_app_root: /opt/zms-app          # code + virtualenv
+zms_app_config_dir: /etc/zms-app    # environment files
+zms_app_log_dir: /var/log/zms-app
+zms_app_user: zmsapp
+zms_app_group: zmsapp
+
+# Bumping this string forces a redeploy of the payload on the next converge even
+# if no file changed. Useful when you want to prove the pipeline works.
+zms_app_version: "1.0.0"
+
+# Gunicorn workers per service. Two is plenty for a lab and keeps t3.medium
+# memory comfortable with four Python processes plus MariaDB on some hosts.
+zms_app_workers: 2
+
+# --- Database access -------------------------------------------------------
+
+zms_app_db_user: zmsapp
+
+# Which client addresses the MariaDB app account may connect from. The whole VPC
+# is 10.188.0.0/16 and the workload subnets are 10.188.1x.0/24, so '10.188.%'
+# covers every app host without pinning an IP that changes on replacement.
+zms_app_db_client_pattern: "10.188.%"
+
+# Fake-data volume. The catalog and inventory services BOTH generate their rows
+# from a fixed random seed and the same product-id range, which is how product
+# 42 in zms_catalog lines up with product 42 in zms_inventory without either
+# service ever reading the other's database.
+zms_app_seed_products: 240
+zms_app_seed_orders: 320
+zms_app_seed_random_seed: 20260829
+
+# --- Optional: continuous fake traffic -------------------------------------
+# A systemd timer on the orders host that POSTs one random order a minute, so
+# the dashboard counters move without anyone clicking. Set to false for a
+# static dataset.
+zms_app_generator_enabled: true
+zms_app_generator_interval: "1min"
+
+# --- Health check tuning ---------------------------------------------------
+# How long the deploy waits for a freshly started service to answer /health.
+zms_app_health_retries: 12
+zms_app_health_delay: 5

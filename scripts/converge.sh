@@ -55,6 +55,24 @@ LINUX_PLAYS=(
   playbooks/rhel-mariadb.yml
   playbooks/linux-fileshare.yml
   playbooks/linux-client.yml
+  # --- ZMS microservices demo application ----------------------------------
+  # Must follow the *-mariadb plays above: zms-app-db.yml expects
+  # mariadb.service to already exist on the hosts it prepares.
+  #
+  # These three are the reason the app self-heals unattended. THIS array -- not
+  # orchestrate.yml -- is what the hourly ansible-estate timer actually runs, so
+  # a playbook missing here never runs on a schedule no matter what
+  # orchestrate.yml imports. Keep the two lists in step when adding a playbook.
+  #
+  # All three are idempotent and fast on a converged estate: the seeder no-ops
+  # once rows exist and pip no-ops once the venv is built. To stop deploying the
+  # demo app on a schedule, delete these three lines; nothing else depends on
+  # them.
+  playbooks/zms-app-db.yml
+  playbooks/zms-app-services.yml
+  playbooks/zms-app-frontend.yml
+  # NOT playbooks/zms-app-verify.yml -- it ends in an assert, so it would mark
+  # the unit failed during a deliberate failure demo. Run it by hand.
 )
 WINDOWS_PLAYS=(
   playbooks/windows-adds.yml
