@@ -645,7 +645,6 @@ zms-ansible-code/
 │   ├── windows-iis.yml
 │   ├── windows-share.yml
 │   ├── windows-python.yml
-│   ├── windows-zms-enforcer.yml
 │   ├── ubuntu-setup.yml
 │   ├── ubuntu-apache2.yml
 │   ├── ubuntu-mysql.yml
@@ -1355,46 +1354,6 @@ Override `share_name` / `share_path` to create other shares, e.g.
 
 Pin a version with `-e python_version=3.12.4`.
 
-## 3.6 `windows-zms-enforcer.yml` — install the Zscaler ZMS Enforcer
-
-**Purpose.** An Ansible conversion of the upstream `windows/install.ps1`. It
-provisions and installs the Zscaler Microsegmentation (ZMS) Enforcer, taking the
-provisioning **nonce** from Secrets Manager rather than a command-line parameter.
-**Default target:** `os_windows`.
-
-How each step of the original PowerShell maps to Ansible:
-
-| `install.ps1` step | Playbook task(s) |
-|---|---|
-| Get nonce / write `provision_key` | `aws_secret` lookup → `win_copy` (exact bytes, `no_log`) |
-| Resolve download endpoint (prod→beta) | `win_wait_for` loop over the two endpoints; first reachable URL selected |
-| Download MSI with retries | `win_get_url` with `retries`/`until` + `validate_certs`, then `win_stat` size check |
-| Install MSI with `PROVISIONKEY_FILE` | `win_package` with `arguments` + `expected_return_code: [0, 3010]` |
-| Exit-3010 reboot handling | conditional `win_reboot` (gated by `zms_auto_reboot`) or a pending-reboot notice |
-
-Notable details:
-
-- The nonce is read from `ansible-control/zms-provision-nonce` and written to the
-  `provision_key` file with `win_copy content:` (exact bytes, no BOM or trailing
-  newline). An `assert` first confirms the nonce was retrieved.
-- Two endpoints are tried in order — production
-  (`eyez-dist.private.zscaler.com`) then beta (`eyez-dist.zpabeta.net`); the
-  first reachable on port 443 is selected with a Jinja `rejectattr('failed')`
-  expression. If neither is reachable, an `assert` fails the run with a clear
-  message.
-- The download is retried up to `zms_download_retries` times; certificate
-  validation (`validate_certs: true`) covers the script's separate TLS-handshake
-  diagnostic — a man-in-the-middle proxy breaking TLS simply fails the download.
-- `win_package` accepts both `0` and `3010` (reboot-required) as success.
-- A security improvement over the script: the `provision_key` file (which
-  contains the nonce) is **deleted after install** by default
-  (`zms_cleanup_provision_key: true`), so the nonce is not left on disk.
-
-**Prerequisite:** create `ansible-control/zms-provision-nonce` (plain string, the
-pipe-delimited nonce from the ZMS Console). Set `-e zms_auto_reboot=true` to let
-Ansible reboot on exit 3010.
-
-\newpage
 ## 3.7 `ubuntu-setup.yml` — update + common packages (Ubuntu)
 
 **Purpose.** A consolidated Ubuntu setup: a full package upgrade *and* the
@@ -1568,7 +1527,6 @@ separate.
 | `<base>/ansible-credentials-<suffix>` (name via `ANSIBLE_SECRET_NAME`) | JSON `{ssh_private_key, winrm_username, winrm_password}` | SSH key (`bootstrap.yml`) + WinRM (`os_windows.yml`) |
 | `ansible-control/adds-dsrm-password` | plain string | `windows-adds.yml` |
 | `ansible-control/domain-join-credential` | JSON `{username,password}` | `windows-domain-join.yml` |
-| `ansible-control/zms-provision-nonce` | plain string | `windows-zms-enforcer.yml` |
 | `ansible-control/mysql-root-password` | plain string (optional) | `ubuntu-mysql.yml`, `amazonlinux-mysql.yml` |
 
 The control node's IAM role must be permitted to read these (the connection
@@ -1721,13 +1679,19 @@ hosts.
 
 **Steps.**
 
-1. Create `ansible-control/zms-provision-nonce` with a test nonce string.
-2. Preview: `ansible-playbook playbooks/windows-zms-enforcer.yml --limit
-   <win-host> --check`.
+1. Inspect `inventory/group_vars/os_windows.yml` and note that `ansible_user` and
+   `ansible_password` are resolved by a field-scoped `amazon.aws.aws_secret`
+   lookup rather than stored in Git.
+2. Prove the credential path works end to end:
+   `ansible os_windows -m ansible.windows.win_ping`.
+3. Run a play that reads a *different* field of the same consolidated secret:
+   `ansible-playbook playbooks/windows-adds.yml --limit <dc-host> --check`
+   (it asserts `dsrm_password` is present before doing anything).
 
-**Verification.** The play's opening `assert` passes (the nonce resolved). You can
-articulate why the nonce never appears in logs (`no_log: true` on the
-`provision_key` write) and why the file is removed afterward.
+**Verification.** `win_ping` returns `pong`, and the `windows-adds.yml` opening
+`assert` passes. You can articulate why each playbook looks up only the single
+field it needs — instead of loading the whole credential bundle into a global
+variable — and why those tasks carry `no_log: true`.
 
 ## Module 8 — Capstone
 
@@ -1824,7 +1788,6 @@ ansible-playbook playbooks/windows-iis.yml -e target=role_web --check
 ansible-playbook playbooks/windows-share.yml -e share_name=software
 ansible-playbook playbooks/windows-python.yml -e python_version=3.12.4
 ansible-playbook playbooks/windows-domain-join.yml -e domain_dns_server=10.0.0.10
-ansible-playbook playbooks/windows-zms-enforcer.yml -e zms_auto_reboot=true
 ansible-playbook playbooks/ubuntu-setup.yml --tags update
 ansible-playbook playbooks/ubuntu-apache2.yml --limit web01,web02
 ansible-playbook playbooks/ubuntu-mysql.yml -e target=role_db
@@ -1931,7 +1894,6 @@ the control node's IAM role can read it. JSON secrets must be valid JSON for
 | `playbooks/windows-iis.yml` | Enable IIS |
 | `playbooks/windows-share.yml` | Read-only SMB share |
 | `playbooks/windows-python.yml` | Install Python via Chocolatey |
-| `playbooks/windows-zms-enforcer.yml` | Install Zscaler ZMS Enforcer |
 | `playbooks/ubuntu-setup.yml` | Update + common packages (Ubuntu) |
 | `playbooks/ubuntu-apache2.yml` | Apache2 service (Ubuntu) |
 | `playbooks/ubuntu-mysql.yml` | MySQL service (Ubuntu) |

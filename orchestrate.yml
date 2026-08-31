@@ -83,5 +83,4 @@
 - import_playbook: playbooks/windows-iis.yml         # role_web       & os_windows
 - import_playbook: playbooks/windows-share.yml       # role_fileshare & os_windows
 - import_playbook: playbooks/windows-python.yml      # os_windows
-- import_playbook: playbooks/windows-zms-enforcer.yml # os_windows
 - import_playbook: playbooks/windows-client.yml      # role_client    & os_windows

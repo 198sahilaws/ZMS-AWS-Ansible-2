@@ -81,7 +81,6 @@ WINDOWS_PLAYS=(
   playbooks/windows-iis.yml
   playbooks/windows-share.yml
   playbooks/windows-python.yml
-  playbooks/windows-zms-enforcer.yml
   playbooks/windows-client.yml
 )
 

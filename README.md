@@ -156,7 +156,6 @@ inventory are picked up.
 | `playbooks/windows-share.yml` | `role_fileshare` | Creates an SMB share, **Everyone read-only** (share + NTFS). Override `share_name` / `share_path`. |
 | `playbooks/windows-python.yml` | `os_windows` | Installs `python3` from the internal Chocolatey source. Pin with `-e python_version=3.12.4`. |
 | `playbooks/windows-domain-join.yml` | `os_windows` | Joins hosts to **alcor.co.in** via `microsoft.ad.membership` (skips `role_dc`). Join creds from Secrets Manager (`ansible-control/domain-join-credential`, JSON username/password). Set `domain_dns_server` if VPC DNS isn't the DC. |
-| `playbooks/windows-zms-enforcer.yml` | `os_windows` | Installs the **Zscaler Microsegmentation Enforcer** (conversion of `windows/install.ps1`). Nonce from Secrets Manager (`ansible-control/zms-provision-nonce`); prod→beta endpoint fallback, retried download, `PROVISIONKEY_FILE` install. |
 | `playbooks/windows-rodc.yml` | `role_rodc` | Joins the domain then promotes a **read-only DC** (`microsoft.ad.domain_controller`, `read_only: true`). Run after `windows-adds.yml`. |
 | `playbooks/windows-reset-admin.yml` | `os_windows` | **Recovery tool.** Re-syncs the local admin (`winrm_username`) password to the secret when WinRM auth is rejected (password drift). Enforces the password (reports `changed` every run); **not** in `orchestrate.yml`. Drift case: connect with the currently-working password via `-e ansible_user=... -e ansible_password=...`. |
 
@@ -167,7 +166,6 @@ ansible-playbook playbooks/windows-iis.yml -e target=role_web --check
 ansible-playbook playbooks/windows-share.yml -e share_name=software -e 'share_path=D:\Shares\software'
 ansible-playbook playbooks/windows-python.yml --limit win-app01
 ansible-playbook playbooks/windows-domain-join.yml --limit win-app01 -e domain_dns_server=10.0.0.10
-ansible-playbook playbooks/windows-zms-enforcer.yml --limit win-app01 -e zms_auto_reboot=true
 ```
 
 > The forest build requires `ansible-control/adds-dsrm-password` to exist in
