@@ -78,7 +78,8 @@
 
 # --- 3. Windows AD chain (forest -> members -> RODC -> services) -------------
 - import_playbook: playbooks/windows-adds.yml        # role_dc
-- import_playbook: playbooks/windows-domain-join.yml # os_windows (skips DC/RODC)
+- import_playbook: playbooks/windows-adc.yml         # role_adc
+- import_playbook: playbooks/windows-domain-join.yml # os_windows (skips DC/ADC/RODC)
 - import_playbook: playbooks/windows-rodc.yml        # role_rodc
 - import_playbook: playbooks/windows-iis.yml         # role_web       & os_windows
 - import_playbook: playbooks/windows-share.yml       # role_fileshare & os_windows

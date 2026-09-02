@@ -14,6 +14,18 @@ regions:
 filters:
   instance-state-name: running
   tag:ManagedBy: Terraform          # only managed instances
+  # ESTATE SCOPE. ANSIBLE_ESTATE comes from /etc/ansible/estate.env, which
+  # Terraform writes at control-node build time with THIS deployment's
+  # Environment tag. Without it, two deployments sharing an account and region
+  # each discover the other's hosts - and windows-domain-join.yml (hosts:
+  # os_windows) would happily try to join the wrong estate's machines.
+  #
+  # The '*' fallback is deliberate: an EC2 tag filter accepts wildcards, so an
+  # unset ANSIBLE_ESTATE matches any instance that HAS an Environment tag,
+  # which is exactly the pre-isolation behaviour. A literal empty string would
+  # match NOTHING and silently empty the inventory on an older control node
+  # whose cloud-init predates this variable.
+  tag:Environment: "{{ lookup('ansible.builtin.env', 'ANSIBLE_ESTATE') | default('*', true) }}"
 # Prefer private IP — the control node sits inside the VPC.
 hostnames:
   - private-ip-address

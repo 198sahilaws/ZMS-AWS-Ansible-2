@@ -46,9 +46,13 @@
           var.domain_join_username and var.domain_join_password in terraform.tfvars.
       no_log: true
 
-    - name: Skip domain controllers and RODCs (promoted, not member-joined)
+    # Every flavour of domain controller is PROMOTED by its own playbook
+    # (windows-adds / windows-adc / windows-rodc), each of which performs its own
+    # member join first. Joining them here as well is redundant and reboots the
+    # host an extra time mid-chain.
+    - name: Skip domain controllers, additional DCs and RODCs (promoted, not member-joined)
       ansible.builtin.meta: end_host
-      when: "'role_dc' in group_names or 'role_rodc' in group_names"
+      when: "'role_dc' in group_names or 'role_adc' in group_names or 'role_rodc' in group_names"
 
     - name: Fail early if no domain controller was discovered
       ansible.builtin.assert:

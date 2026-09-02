@@ -152,10 +152,11 @@ inventory are picked up.
 | Playbook | Default target | What it does |
 |---|---|---|
 | `playbooks/windows-adds.yml` | `role_dc` | Installs AD DS and builds a **new forest** `alcor.co.in` (NetBIOS `ALCOR`). DSRM password from Secrets Manager (`ansible-control/adds-dsrm-password`). |
+| `playbooks/windows-adc.yml` | `role_adc` | Joins the domain then promotes an **additional WRITABLE DC** into the existing forest (`microsoft.ad.domain_controller`, `read_only` unset). Run after `windows-adds.yml`, before `windows-rodc.yml`. **Do not tag a second host `Role=dc`** — `windows-adds.yml` CREATES a forest on every `role_dc` host, so that builds two forests instead of one. |
 | `playbooks/windows-iis.yml` | `role_web` | Enables IIS (`Web-Server` + mgmt console) and starts `W3SVC`. Override `iis_features` for extras. |
 | `playbooks/windows-share.yml` | `role_fileshare` | Creates an SMB share, **Everyone read-only** (share + NTFS). Override `share_name` / `share_path`. |
 | `playbooks/windows-python.yml` | `os_windows` | Installs `python3` from the internal Chocolatey source. Pin with `-e python_version=3.12.4`. |
-| `playbooks/windows-domain-join.yml` | `os_windows` | Joins hosts to **alcor.co.in** via `microsoft.ad.membership` (skips `role_dc`). Join creds from Secrets Manager (`ansible-control/domain-join-credential`, JSON username/password). Set `domain_dns_server` if VPC DNS isn't the DC. |
+| `playbooks/windows-domain-join.yml` | `os_windows` | Joins hosts to **alcor.co.in** via `microsoft.ad.membership` (skips `role_dc`, `role_adc` and `role_rodc` — those are promoted by their own playbooks, which member-join first). Join creds from Secrets Manager (`ansible-control/domain-join-credential`, JSON username/password). Set `domain_dns_server` if VPC DNS isn't the DC. |
 | `playbooks/windows-rodc.yml` | `role_rodc` | Joins the domain then promotes a **read-only DC** (`microsoft.ad.domain_controller`, `read_only: true`). Run after `windows-adds.yml`. |
 | `playbooks/windows-reset-admin.yml` | `os_windows` | **Recovery tool.** Re-syncs the local admin (`winrm_username`) password to the secret when WinRM auth is rejected (password drift). Enforces the password (reports `changed` every run); **not** in `orchestrate.yml`. Drift case: connect with the currently-working password via `-e ansible_user=... -e ansible_password=...`. |
 

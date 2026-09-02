@@ -76,6 +76,12 @@ LINUX_PLAYS=(
 )
 WINDOWS_PLAYS=(
   playbooks/windows-adds.yml
+  # Additional WRITABLE domain controllers (role_adc). Must follow windows-adds
+  # (it promotes into the forest that play creates) and precede windows-rodc (an
+  # RODC replicates from a writable DC). NOT the same as role_dc: windows-adds
+  # CREATES a forest on every role_dc host, so a second Role=dc host would build
+  # a second forest rather than joining the first.
+  playbooks/windows-adc.yml
   playbooks/windows-domain-join.yml
   playbooks/windows-rodc.yml
   playbooks/windows-iis.yml
