@@ -1,0 +1,149 @@
+---
+# Deploy the service desk web application onto the web host.
+#
+# Order matters: interpreter -> user/dirs -> payload -> venv -> config ->
+# schema -> seed -> service -> firewall -> health. The schema and seed run from
+# HERE rather than from the database role because this is where the venv,
+# PyMySQL and schema.sql exist.
+
+- name: Resolve the database host from the inventory
+  ansible.builtin.set_fact:
+    sd_db_host: >-
+      {{ (groups[sd_db_group] | default([]))
+         | intersect(groups[sd_db_distro_group] | default([]))
+         | first | default('', true) }}
+
+- name: Fail with an actionable message when no database host was discovered
+  ansible.builtin.fail:
+    msg: >-
+      No host is in both {{ sd_db_group }} and {{ sd_db_distro_group }}, so the
+      service desk has nowhere to store data. Deploy an Ubuntu host with
+      Role=db (deployments/web-app does this), or repoint sd_db_group /
+      sd_db_distro_group in vars/servicedesk.yml.
+  when: sd_db_host | length == 0
+
+- name: Install Python and venv support
+  ansible.builtin.include_tasks: python.yml
+
+- name: Create the application group
+  ansible.builtin.group:
+    name: "{{ sd_app_group_name }}"
+    system: true
+    state: present
+
+- name: Create the application user
+  ansible.builtin.user:
+    name: "{{ sd_app_user }}"
+    group: "{{ sd_app_group_name }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ sd_app_root }}"
+    create_home: false
+    state: present
+
+- name: Create the application directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ sd_app_group_name }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ sd_app_root }}"
+      mode: "0755"
+    - path: "{{ sd_app_root }}/src"
+      mode: "0755"
+    - path: "{{ sd_app_config_dir }}"
+      mode: "0750"
+    - path: "{{ sd_app_log_dir }}"
+      mode: "0755"
+      owner: "{{ sd_app_user }}"
+
+- name: Deploy the application payload
+  ansible.builtin.copy:
+    src: app/
+    dest: "{{ sd_app_root }}/src/"
+    owner: root
+    group: "{{ sd_app_group_name }}"
+    mode: "0644"
+    directory_mode: "0755"
+  notify: restart servicedesk
+
+- name: Create the virtualenv and install dependencies
+  ansible.builtin.pip:
+    name: "{{ sd_app_pip_packages }}"
+    virtualenv: "{{ sd_app_root }}/venv"
+    virtualenv_command: "{{ sd_python }} -m venv"
+    state: present
+  notify: restart servicedesk
+
+- name: Install the environment file
+  ansible.builtin.template:
+    src: servicedesk.env.j2
+    dest: "{{ sd_app_config_dir }}/servicedesk.env"
+    owner: root
+    group: "{{ sd_app_group_name }}"
+    # 0640: it carries the database password, and the service user must read it.
+    mode: "0640"
+  no_log: true
+  notify: restart servicedesk
+
+- name: Create the schema and seed it
+  ansible.builtin.include_tasks: schema.yml
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: servicedesk.service.j2
+    dest: /etc/systemd/system/servicedesk.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart servicedesk
+
+- name: Start and enable the service
+  ansible.builtin.systemd:
+    name: servicedesk
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# Apply any pending restart now, so the health check below tests the code that
+# was just deployed rather than the previous version.
+- name: Apply pending restarts before checking health
+  ansible.builtin.meta: flush_handlers
+
+- name: Detect whether firewalld is active # noqa command-instead-of-module
+  ansible.builtin.command: systemctl is-active firewalld
+  register: sd_app_firewalld
+  changed_when: false
+  failed_when: false
+
+- name: Open the application port in firewalld
+  ansible.posix.firewalld:
+    port: "{{ sd_app_port }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  when: sd_app_firewalld.stdout | trim == 'active'
+
+- name: Wait for the application to answer on /health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ sd_app_port }}/health"
+    return_content: true
+    # 503 is a VALID answer here: it means the app is up and telling us the
+    # database is not. Failing on it would turn a diagnosable state into an
+    # opaque converge failure.
+    status_code: [200, 503]
+  register: sd_health
+  until: sd_health.status in [200, 503]
+  retries: "{{ sd_app_health_retries }}"
+  delay: "{{ sd_app_health_delay }}"
+
+- name: Report the deployed application
+  ansible.builtin.debug:
+    msg: >-
+      service desk on {{ inventory_hostname }}:{{ sd_app_port }} is
+      {{ sd_health.json.status | default('unknown') }};
+      database {{ sd_db_host }}/{{ sd_db_name }} reachable=
+      {{ sd_health.json.database.reachable | default('unknown') }},
+      tickets={{ sd_health.json.database.tickets | default('n/a') }}

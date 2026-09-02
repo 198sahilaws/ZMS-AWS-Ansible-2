@@ -1,0 +1,45 @@
+# {{ ansible_managed }}
+[Unit]
+Description=ZMS lab service desk (port {{ sd_app_port }}, database {{ sd_db_host }}/{{ sd_db_name }})
+Documentation=file://{{ sd_app_root }}/src/sdapp/web.py
+# network-online, not just network: gunicorn binds 0.0.0.0 and the app talks to
+# another host on the first request, so a half-configured interface at boot is a
+# real failure mode on EC2.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ sd_app_user }}
+Group={{ sd_app_group_name }}
+WorkingDirectory={{ sd_app_root }}/src
+EnvironmentFile={{ sd_app_config_dir }}/servicedesk.env
+ExecStart={{ sd_app_root }}/venv/bin/gunicorn \
+    --workers {{ sd_app_workers }} \
+    --bind 0.0.0.0:{{ sd_app_port }} \
+    --timeout 30 \
+    --graceful-timeout 10 \
+    --access-logfile - \
+    --error-logfile - \
+    --access-logformat '%(h)s "%(r)s" %(s)s %(M)sms' \
+    sdapp.wsgi:app
+
+# Restart always, with a delay. This is what makes "stop the database and watch
+# it degrade" a deliberate demo: the app stays up and answers 503 rather than
+# disappearing, so you can see the difference between app-down and db-down.
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=servicedesk
+
+# Lab-grade hardening: enough to be a good example, not so much that it fights
+# a mixed estate.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

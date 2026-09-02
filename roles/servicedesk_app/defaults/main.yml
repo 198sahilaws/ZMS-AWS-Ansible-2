@@ -1,0 +1,62 @@
+---
+# Defaults for servicedesk_app. Real values come from vars/servicedesk.yml,
+# loaded by the playbook with vars_files; these are last-resort fallbacks.
+
+sd_app_root: /opt/servicedesk
+sd_app_config_dir: /etc/servicedesk
+sd_app_log_dir: /var/log/servicedesk
+sd_app_user: sdapp
+sd_app_group_name: sdapp
+sd_app_port: 8090
+sd_app_version: "1.0.0"
+sd_app_workers: 2
+
+sd_db_name: servicedesk
+sd_db_port: 3306
+sd_db_user: sdapp
+sd_db_password: ""
+sd_db_host: ""
+
+sd_db_group: role_db
+sd_db_distro_group: distro_ubuntu
+
+sd_seed_users: 40
+sd_seed_tickets: 500
+sd_seed_days: 90
+sd_seed_random: 20260901
+
+# Pure-Python wheels only, on purpose: nothing here compiles, so no host needs
+# gcc or python3-devel. That is why this is Flask and not FastAPI, and why the
+# DB account uses mysql_native_password rather than caching_sha2_password
+# (which would drag in `cryptography`).
+sd_app_pip_packages:
+  - Flask>=2.2,<4
+  - gunicorn>=21,<24
+  - PyMySQL>=1.0,<2
+
+sd_app_health_retries: 12
+sd_app_health_delay: 5
+
+sd_python_min_minor: 8
+sd_python_candidates:
+  - python3.13
+  - python3.12
+  - python3.11
+  - python3.10
+  - python3.9
+  - python3
+
+# Environment handed to the bootstrap/seed commands and rendered into the
+# systemd EnvironmentFile. Defined once so the two cannot drift.
+sd_app_environment:
+  SD_DB_HOST: "{{ sd_db_host }}"
+  SD_DB_PORT: "{{ sd_db_port }}"
+  SD_DB_NAME: "{{ sd_db_name }}"
+  SD_DB_USER: "{{ sd_db_user }}"
+  SD_DB_PASSWORD: "{{ sd_db_password }}"
+  SD_APP_PORT: "{{ sd_app_port }}"
+  SD_SEED_USERS: "{{ sd_seed_users }}"
+  SD_SEED_TICKETS: "{{ sd_seed_tickets }}"
+  SD_SEED_DAYS: "{{ sd_seed_days }}"
+  SD_SEED_RANDOM: "{{ sd_seed_random }}"
+  PYTHONPATH: "{{ sd_app_root }}/src"

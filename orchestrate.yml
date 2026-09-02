@@ -74,7 +74,14 @@
 # else depends on them.
 - import_playbook: playbooks/zms-app-db.yml          # role_db  (3 MariaDB hosts)
 - import_playbook: playbooks/zms-app-services.yml    # role_web (catalog/inventory/orders)
-- import_playbook: playbooks/zms-app-frontend.yml    # role_web & distro_sles (storefront)
+- import_playbook: playbooks/zms-app-frontend.yml
+
+# --- 2c. Service desk (Flask + MySQL, deployments/web-app) -------------------
+# db -> app -> client. No-ops with "no hosts matched" on an estate without an
+# Ubuntu role_web/role_db/role_client trio.
+- import_playbook: playbooks/servicedesk-db.yml      # role_db     & distro_ubuntu
+- import_playbook: playbooks/servicedesk-app.yml     # role_web    & distro_ubuntu
+- import_playbook: playbooks/servicedesk-client.yml  # role_client & distro_ubuntu    # role_web & distro_sles (storefront)
 
 # --- 3. Windows AD chain (forest -> members -> RODC -> services) -------------
 - import_playbook: playbooks/windows-adds.yml        # role_dc

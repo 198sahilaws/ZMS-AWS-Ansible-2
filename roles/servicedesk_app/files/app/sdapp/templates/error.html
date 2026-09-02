@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2 style="margin-top:0">Service degraded</h2>
+  <p>The service desk is running but cannot reach its database.</p>
+  <p class="muted">{{ detail }}</p>
+  <p class="muted">
+    This page is a 503 on purpose. In the lab it is what you should see when the
+    MySQL host is stopped or its port is closed — the web tier stays up and says
+    what is wrong, rather than returning a stack trace.
+  </p>
+</div>
+{% endblock %}

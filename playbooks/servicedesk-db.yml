@@ -1,0 +1,57 @@
+---
+# Prepare the database host for the service desk.
+#
+#   ansible-playbook playbooks/servicedesk-db.yml
+#   ansible-playbook playbooks/servicedesk-db.yml -e target=10.191.10.20
+#
+# Creates the `servicedesk` database, the application account and the server
+# drop-in (bind-address, skip-name-resolve). The TABLES are created by
+# servicedesk-app.yml, which has the venv and schema.sql.
+#
+# Run before servicedesk-app.yml.
+
+- name: Prepare the service desk database host
+  # Role AND distro intersection — role_db spans every distro in the estate, so
+  # a bare role group would try to prepare the SLES and RHEL MariaDB hosts too.
+  hosts: "{{ target | default(sd_db_group ~ ':&' ~ sd_db_distro_group) }}"
+  gather_facts: true
+  vars_files:
+    - ../vars/servicedesk.yml
+  vars:
+    # Credentials resolved FIELD-SCOPED and inline (see group_vars/all.yml). Two
+    # separate lookups rather than one bound `secret` dict on purpose: binding
+    # the whole document would put the SSH private key and every other password
+    # in scope for this play, where one -vvv leaks all of them.
+    sd_mysql_root_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).mysql_root_password | default('', true) }}"
+    # Dedicated app password if Terraform ever adds one to the consolidated
+    # secret; otherwise the root password is reused for the scoped app account.
+    # The account is still NOT root: its grant is servicedesk.* only, so the
+    # blast radius is bounded by the grant rather than by the password.
+    sd_db_password_from_secret: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).servicedesk_db_password | default('', true) }}"
+  pre_tasks:
+    - name: Skip hosts that are not part of the Debian/RedHat/Suse families we handle
+      ansible.builtin.meta: end_host
+      when: ansible_facts['os_family'] not in ['Debian', 'RedHat', 'Suse']
+
+    - name: Assert a database password is available
+      ansible.builtin.assert:
+        that:
+          - (sd_db_password_from_secret | length > 0) or (sd_mysql_root_password | length > 0)
+        fail_msg: >-
+          Neither servicedesk_db_password nor mysql_root_password is set in the
+          consolidated secret. Set var.mysql_root_password in terraform.tfvars
+          (deployments/web-app) and re-apply, then converge again.
+      no_log: true
+
+    - name: Resolve the effective application password and client pattern
+      ansible.builtin.set_fact:
+        sd_db_password: "{{ sd_db_password_from_secret if sd_db_password_from_secret | length > 0 else sd_mysql_root_password }}"
+        # Grant the app account only from the app host's own /16. Derived from
+        # the discovered address rather than a hardcoded CIDR, so it is correct
+        # in every deployment (10.190/10.191/10.192) and survives an instance
+        # replacement inside the same VPC.
+        sd_db_client_pattern: >-
+          {{ ((groups[sd_app_group] | default([])) | intersect(groups[sd_app_distro_group] | default([])) | first | default('10.0.0.0', true)).split('.')[0:2] | join('.') }}.%
+      no_log: true
+  roles:
+    - servicedesk_db

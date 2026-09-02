@@ -1,0 +1,17 @@
+---
+# Install the traffic generator on the client host.
+#
+#   ansible-playbook playbooks/servicedesk-client.yml
+#   ansible-playbook playbooks/servicedesk-client.yml -e sd_traffic_enabled=false
+#
+# Needs no credentials: the generator only speaks HTTP to the web host.
+# Run AFTER servicedesk-app.yml, or the first burst simply fails harmlessly and
+# the timer picks it up on the next tick.
+
+- name: Install the service desk traffic generator
+  hosts: "{{ target | default(sd_client_group ~ ':&' ~ sd_client_distro_group) }}"
+  gather_facts: true
+  vars_files:
+    - ../vars/servicedesk.yml
+  roles:
+    - servicedesk_client

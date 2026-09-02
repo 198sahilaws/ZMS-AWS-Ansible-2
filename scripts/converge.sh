@@ -71,6 +71,21 @@ LINUX_PLAYS=(
   playbooks/zms-app-db.yml
   playbooks/zms-app-services.yml
   playbooks/zms-app-frontend.yml
+  # --- Service desk (Flask + MySQL on the Ubuntu web/db pair) --------------
+  # Must follow ubuntu-mysql.yml above: servicedesk-db.yml expects mysql.service
+  # to already exist on the host it prepares. db -> app -> client is the only
+  # valid order: the app creates its tables in the database the first play
+  # made, and the client sends traffic at the app.
+  #
+  # All three are idempotent and fast on a converged estate: CREATE TABLE IF
+  # NOT EXISTS is a no-op, pip no-ops once the venv is built, and the seeder
+  # exits without writing once tickets exist. To stop deploying the service
+  # desk on a schedule, delete these three lines; nothing else depends on them.
+  playbooks/servicedesk-db.yml
+  playbooks/servicedesk-app.yml
+  playbooks/servicedesk-client.yml
+  # NOT playbooks/servicedesk-verify.yml -- it ends in asserts, so it would
+  # mark the unit failed during a deliberate failure demo. Run it by hand.
   # NOT playbooks/zms-app-verify.yml -- it ends in an assert, so it would mark
   # the unit failed during a deliberate failure demo. Run it by hand.
 )

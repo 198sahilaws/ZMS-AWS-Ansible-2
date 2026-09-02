@@ -1,0 +1,7 @@
+---
+sd_app_port: 8090
+sd_app_host: ""
+sd_traffic_enabled: true
+sd_traffic_interval: "2min"
+sd_traffic_jitter: "45s"
+sd_traffic_dir: /opt/servicedesk-traffic

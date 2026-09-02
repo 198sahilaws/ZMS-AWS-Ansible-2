@@ -1,0 +1,53 @@
+---
+# Create the tables, then put data in them. Two steps, two error messages: a
+# grant problem and a data problem look nothing alike and should not share one.
+
+- name: Check that the database port is reachable from this host
+  ansible.builtin.wait_for:
+    host: "{{ sd_db_host }}"
+    port: "{{ sd_db_port }}"
+    timeout: 15
+    state: started
+  register: sd_db_reachable
+  failed_when: false
+  changed_when: false
+
+- name: Explain an unreachable database rather than failing the converge
+  ansible.builtin.debug:
+    msg: >-
+      SKIPPING schema and seed — {{ inventory_hostname }} cannot open a TCP
+      connection to {{ sd_db_host }}:{{ sd_db_port }}. Almost always one of:
+      playbooks/servicedesk-db.yml has not run yet, MySQL is still bound to
+      127.0.0.1, or a host firewall is closed. The service will start anyway and
+      report the problem on /health, which is the point of that endpoint.
+  when: sd_db_reachable is failed
+
+- name: Create the tables (idempotent — CREATE TABLE IF NOT EXISTS)
+  ansible.builtin.command:
+    cmd: "{{ sd_app_root }}/venv/bin/python -m sdapp.bootstrap"
+    chdir: "{{ sd_app_root }}/src"
+  environment: "{{ sd_app_environment }}"
+  register: sd_bootstrap
+  changed_when: false
+  when: sd_db_reachable is not failed
+  no_log: true
+
+- name: Show the schema result
+  ansible.builtin.debug:
+    msg: "{{ sd_bootstrap.stdout_lines | default(['skipped — database unreachable']) }}"
+
+- name: Seed the database (no-op once populated)
+  ansible.builtin.command:
+    cmd: "{{ sd_app_root }}/venv/bin/python -m sdapp.seed"
+    chdir: "{{ sd_app_root }}/src"
+  environment: "{{ sd_app_environment }}"
+  register: sd_seed
+  # Only a first run prints "inserted"; every later converge prints
+  # "already seeded" and must not report changed.
+  changed_when: "'inserted' in sd_seed.stdout"
+  when: sd_db_reachable is not failed
+  no_log: true
+
+- name: Show what the seeder did
+  ansible.builtin.debug:
+    msg: "{{ sd_seed.stdout_lines | default(['skipped — database unreachable']) }}"

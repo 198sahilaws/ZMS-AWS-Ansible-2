@@ -1,0 +1,82 @@
+---
+# Service Desk lab — topology and deployment settings.
+#
+# SINGLE SOURCE OF TRUTH for the application. Every servicedesk-*.yml playbook
+# loads this file via `vars_files`, so the host/port/schema map is declared once
+# and nothing is hardcoded in a task, template or unit file. Same contract as
+# vars/zms-app.yml.
+#
+# WHY GROUP NAMES AND NOT IP ADDRESSES
+# The estate is discovered dynamically (inventory/aws_ec2.yml, hostnames =
+# private-ip-address), so an instance replacement changes every private IP. The
+# map below names INVENTORY GROUPS and each play resolves the intersection to an
+# address at run time:
+#
+#     groups['role_db'] | intersect(groups['distro_ubuntu']) | first
+#
+# Re-run Terraform, get new IPs, converge again — the map still holds.
+#
+# TOPOLOGY (deployments/web-app builds exactly this)
+#
+#   host                              role        what runs there
+#   --------------------------------  ----------  ----------------------------
+#   role_web    & distro_ubuntu       web         gunicorn on :8090 + the schema
+#   role_db     & distro_ubuntu       db          MySQL 8, schema `servicedesk`
+#   role_client & distro_ubuntu       client      sd-traffic timer (real HTTP)
+#
+# Every request crosses a host boundary: client -> web over HTTP, web -> db over
+# MySQL, on a fresh TCP connection each time. That is the point of the app.
+#
+# NOTE ON MySQL vs MariaDB: the Ubuntu db host runs ORACLE MySQL
+# (playbooks/ubuntu-mysql.yml installs mysql-server), unlike the rest of the
+# estate which runs MariaDB. The schema is deliberately kept to syntax both
+# accept, and the role probes for whichever unit exists, so repointing this app
+# at a MariaDB host needs no code change — only an edit below.
+
+# --- Placement ---------------------------------------------------------------
+# Role group intersected with distro group. Change these to move the app.
+sd_app_group: role_web
+sd_app_distro_group: distro_ubuntu
+
+sd_db_group: role_db
+sd_db_distro_group: distro_ubuntu
+
+sd_client_group: role_client
+sd_client_distro_group: distro_ubuntu
+
+# --- Application -------------------------------------------------------------
+sd_app_port: 8090 # free: ZMS uses 8001-8003 and 8080, Apache uses 80
+sd_db_name: servicedesk
+sd_db_port: 3306
+
+sd_app_root: /opt/servicedesk # code + virtualenv
+sd_app_config_dir: /etc/servicedesk # environment file
+sd_app_log_dir: /var/log/servicedesk
+sd_app_user: sdapp
+sd_app_group_name: sdapp
+
+# Bump to force a redeploy of the payload on the next converge even if no file
+# changed — useful for proving the pipeline works.
+sd_app_version: "1.0.0"
+
+# Two is plenty for a lab and keeps a t3.medium comfortable alongside Apache.
+sd_app_workers: 2
+
+# --- Seed data ---------------------------------------------------------------
+# The seeder is idempotent (no-ops once tickets exist) and deterministic: the
+# same seed produces byte-identical content, so "did the data change?" is a
+# question you can answer with a checksum. Change sd_seed_random to get a
+# different-but-still-reproducible dataset.
+sd_seed_users: 40
+sd_seed_tickets: 500
+sd_seed_days: 90
+sd_seed_random: 20260901
+
+# --- Traffic generator -------------------------------------------------------
+# Runs on the client host as a systemd timer. Interval plus jitter, following
+# the zms-order-generator pattern: without RandomizedDelaySec every host fires
+# on the same second and the flow log shows a synchronised pulse no real estate
+# produces — exactly the artefact that misleads a clustering algorithm.
+sd_traffic_enabled: true
+sd_traffic_interval: "2min"
+sd_traffic_jitter: "45s"

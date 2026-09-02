@@ -1,0 +1,96 @@
+---
+# End-to-end check of the service desk, from the client host inward.
+#
+#   ansible-playbook playbooks/servicedesk-verify.yml
+#
+# DELIBERATELY NOT IN scripts/converge.sh OR orchestrate.yml. It ends in
+# asserts, so it would mark the ansible-estate unit failed during a deliberate
+# failure demo (stop MySQL, watch the app degrade). Run it by hand.
+
+- name: Verify the service desk end to end
+  hosts: "{{ target | default(sd_client_group ~ ':&' ~ sd_client_distro_group) }}"
+  gather_facts: true
+  vars_files:
+    - ../vars/servicedesk.yml
+  tasks:
+    - name: Resolve the application host
+      ansible.builtin.set_fact:
+        sd_app_host: >-
+          {{ (groups[sd_app_group] | default([]))
+             | intersect(groups[sd_app_distro_group] | default([]))
+             | first | default('', true) }}
+
+    - name: Assert an application host exists
+      ansible.builtin.assert:
+        that: [sd_app_host | length > 0]
+        fail_msg: "No host in {{ sd_app_group }} & {{ sd_app_distro_group }}."
+
+    - name: Fetch /health from the client host
+      ansible.builtin.uri:
+        url: "http://{{ sd_app_host }}:{{ sd_app_port }}/health"
+        return_content: true
+        status_code: [200, 503]
+      register: sd_v_health
+
+    - name: Assert the application reports a healthy database
+      ansible.builtin.assert:
+        that:
+          - sd_v_health.status == 200
+          - sd_v_health.json.database.reachable
+        fail_msg: >-
+          Service desk is degraded: {{ sd_v_health.json.database | default({}) }}.
+          The app is up (it answered), so this is the database leg — check that
+          servicedesk-db.yml ran and MySQL is listening on 0.0.0.0.
+
+    - name: Assert the database actually holds seeded data
+      ansible.builtin.assert:
+        that:
+          - sd_v_health.json.database.tickets | int > 0
+        fail_msg: >-
+          The database is reachable but holds no tickets. Run
+          playbooks/servicedesk-app.yml (its seed step) or, to force a reseed:
+          {{ sd_app_root }}/venv/bin/python -m sdapp.seed --force
+
+    - name: Fetch /stats
+      ansible.builtin.uri:
+        url: "http://{{ sd_app_host }}:{{ sd_app_port }}/stats"
+        return_content: true
+      register: sd_v_stats
+
+    - name: Assert tickets, comments and users are all populated
+      ansible.builtin.assert:
+        that:
+          - sd_v_stats.json.totals.tickets | int > 0
+          - sd_v_stats.json.totals.comments | int > 0
+          - sd_v_stats.json.totals.users | int > 0
+        fail_msg: "Incomplete seed data: {{ sd_v_stats.json.totals }}"
+
+    - name: Fetch the queue through the JSON API
+      ansible.builtin.uri:
+        url: "http://{{ sd_app_host }}:{{ sd_app_port }}/api/tickets?status=open&limit=5"
+        return_content: true
+      register: sd_v_queue
+
+    - name: Assert the open queue returns rows with joined user names
+      ansible.builtin.assert:
+        that:
+          - sd_v_queue.json | length > 0
+          - sd_v_queue.json[0].requester | length > 0
+        fail_msg: "The open queue returned nothing usable: {{ sd_v_queue.json | default('') }}"
+
+    - name: Run one traffic burst and confirm it succeeds
+      ansible.builtin.command:
+        cmd: "/usr/bin/python3 {{ sd_traffic_dir | default('/opt/servicedesk-traffic') }}/sd-traffic.py --once"
+      environment:
+        SD_BASE_URL: "http://{{ sd_app_host }}:{{ sd_app_port }}"
+      register: sd_v_traffic
+      changed_when: false
+
+    - name: Report the verified state
+      ansible.builtin.debug:
+        msg: >-
+          OK — {{ sd_app_host }}:{{ sd_app_port }} healthy;
+          {{ sd_v_stats.json.totals.tickets }} tickets,
+          {{ sd_v_stats.json.totals.comments }} comments,
+          {{ sd_v_stats.json.totals.users }} users;
+          traffic burst produced {{ sd_v_traffic.stdout_lines | length }} calls.
