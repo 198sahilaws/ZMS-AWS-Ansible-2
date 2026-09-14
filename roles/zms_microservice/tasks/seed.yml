@@ -3,6 +3,12 @@
 #
 # Idempotent by design: the seeder checks for existing rows and exits without
 # writing, so this runs on every converge and only does work the first time.
+#
+# ignore_errors, NOT failed_when: false. `failed_when: false` REWRITES the
+# result's `failed` flag to False, so every `zms_db_port is failed` guard below
+# silently evaluates False — the explanation never prints and the seeder runs
+# against a database that is not there. `ignore_errors` leaves `failed: true`
+# intact and merely continues, which is what these guards are written against.
 
 - name: Check that the database port is reachable from this host
   ansible.builtin.wait_for:
@@ -11,7 +17,7 @@
     timeout: 10
     state: started
   register: zms_db_port
-  failed_when: false
+  ignore_errors: true
   changed_when: false
 
 - name: Explain an unreachable database rather than failing on the seeder
@@ -22,7 +28,7 @@
       not run yet, MariaDB is still bound to 127.0.0.1, or firewalld on the
       database host is closed. The service will start regardless and report the
       problem on /health.
-  when: zms_db_port is failed or zms_db_port.elapsed is not defined
+  when: zms_db_port is failed
 
 - name: Seed the database (no-op once populated)
   ansible.builtin.command:
@@ -43,7 +49,10 @@
       ZMS_SEED_ORDERS: "{{ zms_app_seed_orders }}"
       ZMS_SEED_RANDOM: "{{ zms_app_seed_random_seed }}"
       PYTHONPATH: "{{ zms_app_root }}/src"
-  no_log: true
+  # Hides the environment dict above, which carries the database password — and
+  # unavoidably hides stdout/stderr too, so a real seeder failure arrives as
+  # "censored". Re-run with -e zms_debug_seed=true to see the actual error.
+  no_log: "{{ not (zms_debug_seed | default(false) | bool) }}"
 
 - name: Show what the seeder did
   ansible.builtin.debug:

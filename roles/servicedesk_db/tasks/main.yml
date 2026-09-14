@@ -83,10 +83,29 @@
     - sd_pymysql.rc != 0
     - sd_pymysql2.rc | default(1) != 0
 
+# WHY THE FILE IS CALLED zz- AND NOT 99-.
+#
+# MySQL's `!includedir` reads *.cnf in ASCII order and LAST SETTING WINS. Oracle
+# MySQL on Ubuntu ships /etc/mysql/mysql.conf.d/mysqld.cnf, which contains
+# `bind-address = 127.0.0.1`. '9' (0x39) sorts before 'm' (0x6d), so a file
+# named 99-servicedesk.cnf is read FIRST and mysqld.cnf then overwrites
+# bind-address straight back to loopback. The drop-in applied cleanly, the
+# server restarted, and it still listened on 127.0.0.1 only — which is exactly
+# the failure this role's own warning task reports.
+#
+# The MariaDB convention of numeric prefixes (50-server.cnf) does not transfer:
+# it works there only because every MariaDB drop-in is numbered. 'zz-' sorts
+# last in all four confdirs this role targets, numbered or not.
+- name: Remove the superseded numeric drop-in
+  ansible.builtin.file:
+    path: "{{ sd_db_confdir }}/99-servicedesk.cnf"
+    state: absent
+  notify: restart sd database
+
 - name: Install the service desk server configuration drop-in
   ansible.builtin.template:
-    src: 99-servicedesk.cnf.j2
-    dest: "{{ sd_db_confdir }}/99-servicedesk.cnf"
+    src: servicedesk.cnf.j2
+    dest: "{{ sd_db_confdir }}/{{ sd_db_dropin_name }}"
     owner: root
     group: root
     mode: "0644"
@@ -166,9 +185,13 @@
     msg: >-
       {{ inventory_hostname }} is listening only on loopback
       ({{ sd_db_listen.stdout_lines | default([]) | join(', ') }}). The web host
-      will not be able to connect. The drop-in sets bind-address = 0.0.0.0, so
-      this usually means the server did not restart — check
-      `systemctl status {{ sd_db_unit }}`.
+      will not be able to connect, and every downstream symptom will look like a
+      security group problem instead. {{ sd_db_confdir }}/{{ sd_db_dropin_name }}
+      sets bind-address = 0.0.0.0, so check, in this order: that a LATER-SORTING
+      file in {{ sd_db_confdir }} is not re-setting bind-address
+      (`grep -rn bind-address {{ sd_db_confdir }}` — last file alphabetically
+      wins), and that the server actually restarted
+      (`systemctl status {{ sd_db_unit }}`).
   when: sd_db_listen.stdout_lines | default([]) | select('search', '^0.0.0.0:|^\\*:|^\\[::\\]:') | list | length == 0
 
 - name: Report what was prepared

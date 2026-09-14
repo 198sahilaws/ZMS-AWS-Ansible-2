@@ -21,6 +21,13 @@ sd_db_client_pattern: "10.%"
 # Where the drop-in config goes. A drop-in rather than editing my.cnf in place:
 # an in-place edit needs a different lineinfile per distro and a package upgrade
 # can silently revert it.
+#
+# The 'zz-' prefix is load-bearing. `!includedir` reads *.cnf in ASCII order and
+# the last assignment wins, and Ubuntu's Oracle MySQL ships an UNNUMBERED
+# mysqld.cnf in this same directory that sets bind-address = 127.0.0.1. Anything
+# numeric (99-, 50-) sorts before 'mysqld.cnf' and gets silently overridden.
+sd_db_dropin_name: zz-servicedesk.cnf
+
 sd_db_confdir_mysql_debian: /etc/mysql/mysql.conf.d
 sd_db_confdir_mariadb_debian: /etc/mysql/mariadb.conf.d
 sd_db_confdir_mariadb_redhat: /etc/my.cnf.d

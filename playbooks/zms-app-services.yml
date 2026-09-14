@@ -14,6 +14,14 @@
 # Run playbooks/zms-app-db.yml first. If you do not, this still completes: the
 # services install and start, and the play fails at the health gate with a
 # message naming the database host it could not reach.
+#
+# ESTATES THAT DO NOT RUN THIS LAB. The topology above spans four distros, so a
+# single-distro estate (deployments/web-app builds Ubuntu only) has no host for
+# most of the map. That is a deployment choice, not a misconfiguration, so the
+# play now ENDS THE HOST when the mapped database distro is absent from the
+# estate entirely. The hard failure in roles/zms_microservice is kept for the
+# case that really is a mistake: the distro group exists but no host in it also
+# carries Role=db.
 
 - name: Deploy the ZMS microservices
   hosts: "{{ target | default('role_web') }}"
@@ -41,6 +49,32 @@
     - name: Leave web hosts that run no microservice alone
       ansible.builtin.meta: end_host
       when: zms_assignment is not defined
+
+    # An estate that never built an Amazon Linux / SLES / RHEL host has no group
+    # for it in the dynamic inventory at all, so `not in groups` distinguishes
+    # "this lab does not apply here" from "the host exists but is mistagged".
+    - name: Decide whether this service's database distro exists in the estate
+      ansible.builtin.set_fact:
+        zms_db_distro_absent: >-
+          {{ (zms_assignment.value.db_distro_group | default('')) | length > 0
+             and (zms_assignment.value.db_distro_group not in groups
+                  or (groups[zms_assignment.value.db_distro_group] | default([])) | length == 0) }}
+
+    - name: Explain that the estate does not host this part of the lab
+      ansible.builtin.debug:
+        msg: >-
+          SKIPPING {{ zms_assignment.key }} on {{ inventory_hostname }} — the ZMS
+          microservices lab maps its database to '{{ zms_assignment.value.db_distro_group }}'
+          and this estate contains no host in that group. The lab spans four
+          distros (see vars/zms-app.yml); a single-distro deployment such as
+          deployments/web-app cannot run it. Nothing is wrong with this host.
+          To run the lab, deploy an estate with Amazon Linux, SLES and RHEL
+          hosts, or re-point db_distro_group in vars/zms-app.yml.
+      when: zms_db_distro_absent | bool
+
+    - name: Leave hosts whose database distro is not deployed alone
+      ansible.builtin.meta: end_host
+      when: zms_db_distro_absent | bool
   roles:
     - role: zms_microservice
       vars:
