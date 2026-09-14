@@ -33,8 +33,12 @@ runcmd:
   # Clone the control repo (ZMS-AWS-Ansible-1) and make it ubuntu-owned.
   - [ bash, -c, "test -d /opt/control-repo/.git || git clone -b ${control_repo_branch} ${control_repo_url} /opt/control-repo" ]
   - [ bash, -c, "chown -R ubuntu:ubuntu /opt/control-repo && chmod +x /opt/control-repo/scripts/reconverge.sh 2>/dev/null || true" ]
-  # Persistent Ansible log dir (ansible.cfg log_path + notify-result.sh write here).
-  - [ bash, -c, "install -d -o ubuntu -g ubuntu /var/log/ansible && chmod +x /opt/control-repo/scripts/notify-result.sh 2>/dev/null || true" ]
+  # Runtime dirs, ubuntu-owned — both units are User=ubuntu and cannot create
+  # these themselves. /var/log/ansible: ansible.cfg log_path + notify-result.sh.
+  # /var/tmp/ansible_facts: fact_caching_connection — claim it for ubuntu before
+  # a `sudo ./scripts/collect-debug.sh` creates it as root and silently disables
+  # the cache for every converge thereafter.
+  - [ bash, -c, "install -d -o ubuntu -g ubuntu /var/log/ansible /var/tmp/ansible_facts && chmod +x /opt/control-repo/scripts/notify-result.sh 2>/dev/null || true" ]
   # Install repo-local collections (amazon.aws, ansible.windows, microsoft.ad, ...).
   - [ bash, -c, "cd /opt/control-repo && sudo -u ubuntu ansible-galaxy collection install -r requirements.yml" ]
   # Install + enable the repo's systemd timers (self-converge + estate push).

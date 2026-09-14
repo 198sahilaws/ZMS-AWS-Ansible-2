@@ -38,6 +38,21 @@ mkdir -p "$OUT_DIR"
 # not-writeable warning.
 export PATH="/usr/local/bin:/usr/bin:${PATH}"
 export ANSIBLE_LOG_PATH="${OUT_DIR}/ansible-collect.log"
+
+# Collecting a bundle must not change the node it is inspecting.
+#
+# ansible.cfg sets fact_caching = jsonfile with fact_caching_connection =
+# /var/tmp/ansible_facts. The systemd units run as User=ubuntu, but this script
+# is normally run with sudo — so every ansible/ansible-inventory/ansible-playbook
+# probe below would create that directory as root:root the first time, and from
+# then on the ubuntu-owned converge cannot write it:
+#   [WARNING]: 'jsonfile' cache, configured path (/var/tmp/ansible_facts) does
+#   not have necessary permissions (rwx), disabling plugin
+# On ip-10-188-30-54 that warning appeared 9 times in one converge, and it began
+# immediately after the first debug bundle was collected. Fact caching was then
+# silently off for every run, so the estate re-gathered facts from scratch each
+# time. Pin this process to the in-memory cache so it touches nothing on disk.
+export ANSIBLE_CACHE_PLUGIN=memory
 [ -f "$ENV_FILE" ] && { set -a; . "$ENV_FILE" 2>/dev/null || true; set +a; }
 # export, not a plain assignment. runsh() below executes `bash -lc`, and the
 # probes that need a region reference it as \${REGION} so it expands in that
