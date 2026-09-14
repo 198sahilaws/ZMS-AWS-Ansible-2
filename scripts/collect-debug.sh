@@ -39,7 +39,12 @@ mkdir -p "$OUT_DIR"
 export PATH="/usr/local/bin:/usr/bin:${PATH}"
 export ANSIBLE_LOG_PATH="${OUT_DIR}/ansible-collect.log"
 [ -f "$ENV_FILE" ] && { set -a; . "$ENV_FILE" 2>/dev/null || true; set +a; }
-REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
+# export, not a plain assignment. runsh() below executes `bash -lc`, and the
+# probes that need a region reference it as \${REGION} so it expands in that
+# CHILD shell, where a non-exported variable does not exist. The symptom is
+# maximally confusing: the header prints "region : eu-west-3" correctly (parent
+# shell) while the egress probe on the same page prints "REGION unset" (child).
+export REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 
 # --------------------------------------------------------------- helpers -----
 section() { printf '\n\n========== %s ==========\n' "$*" >>"$REPORT"; }
