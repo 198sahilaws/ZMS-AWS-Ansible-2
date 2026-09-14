@@ -60,12 +60,19 @@ runsh() { # runsh <label> <shell string>
 }
 copy() {  # copy <src> [destname]
   local src="$1"; local dst="${2:-$(basename "$1")}"
-  if [ -r "$src" ]; then
+  # Distinguish "does not exist" from "exists but unreadable". The old code
+  # printed "not readable (try sudo)" for both, which is actively misleading:
+  # on a node where bootstrap.yml has not run yet, /var/log/ansible/ansible.log
+  # simply does not exist, and the bundle reported a permissions problem — as
+  # root. That cost real time in the 2026-09-14 review.
+  if [ ! -e "$src" ]; then
+    printf '  does not exist: %s\n' "$src" >>"$REPORT"
+  elif [ ! -r "$src" ]; then
+    printf '  exists but not readable (try sudo): %s\n' "$src" >>"$REPORT"
+  else
     cp -a "$src" "${OUT_DIR}/${dst}" 2>/dev/null \
       && printf '  collected: %s\n' "$src" >>"$REPORT" \
       || printf '  could not copy: %s\n' "$src" >>"$REPORT"
-  else
-    printf '  not readable (try sudo): %s\n' "$src" >>"$REPORT"
   fi
 }
 
@@ -143,9 +150,19 @@ runsh "describe-secret (no value)" "command -v aws >/dev/null 2>&1 && [ -n \"\${
 # 8) DNS + egress
 section "DNS / NETWORK EGRESS"
 copy /etc/resolv.conf resolv.conf
-runsh "resolve pypi + secretsmanager endpoint" "getent hosts pypi.org; [ -n \"\${REGION:-}\" ] && getent hosts \"secretsmanager.\${REGION}.amazonaws.com\""
+# These two probes used the shape
+#   [ -n "$REGION" ] && <probe> || echo 'REGION unset'
+# which is not an if/else. If REGION IS set and the probe merely fails (curl
+# timeout, DNS miss), the `||` branch fires too and the bundle claims the region
+# is unset. That destroyed the diagnostic value of the line: on the
+# ip-10-188-30-54 bundle it was impossible to tell whether the export fix had
+# shipped or whether secretsmanager was simply unreachable. Report the child
+# shell's view of REGION outright, then probe separately.
+runsh "REGION as seen by the probe subshell" "printf 'REGION=[%s]\n' \"\${REGION:-}\"; [ -n \"\${REGION:-}\" ] || echo 'EMPTY -- estate.env not loaded, or REGION not exported by this script'"
+runsh "resolve pypi" "getent hosts pypi.org || echo 'getent failed (exit '\$?')'"
+runsh "resolve secretsmanager endpoint" "if [ -n \"\${REGION:-}\" ]; then getent hosts \"secretsmanager.\${REGION}.amazonaws.com\" || echo 'no A/AAAA record (getent exit '\$?')'; else echo 'skipped: REGION empty'; fi"
 runsh "egress -> pypi (status)" "curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 12 https://pypi.org/simple/ || echo 'no egress'"
-runsh "egress -> secretsmanager (status)" "[ -n \"\${REGION:-}\" ] && curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 12 \"https://secretsmanager.\${REGION}.amazonaws.com\" || echo 'REGION unset'"
+runsh "egress -> secretsmanager (status)" "if [ -n \"\${REGION:-}\" ]; then curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 12 \"https://secretsmanager.\${REGION}.amazonaws.com\" || echo 'unreachable (curl exit '\$?')'; else echo 'skipped: REGION empty'; fi"
 
 # 9) SSH key (metadata only, never the contents)
 section "SSH KEY (metadata only)"

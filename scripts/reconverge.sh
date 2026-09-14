@@ -22,6 +22,21 @@ REPO_DIR="${CONTROL_REPO_DIR:-/opt/control-repo}"
 
 cd "${REPO_DIR}"
 
+# The control node's bootstrap runs `chmod +x /opt/control-repo/scripts/*.sh`
+# after cloning. Those files are 100644 in the repo, so the chmod flips them to
+# 100755 and git reports them as modified forever — every debug bundle shows
+#   M scripts/collect-debug.sh
+#   M scripts/reconverge.sh
+# which looks like someone edited the node by hand. It is only the exec bit.
+#
+# It is not cosmetic. This script runs under `set -e`, and `git pull --ff-only`
+# refuses to overwrite locally-modified files — so the first time a pushed
+# commit touches either of those two scripts, the pull aborts and takes the
+# whole converge with it, reporting a git error that has nothing to do with the
+# real change. Telling git to stop tracking the exec bit makes the chmod a
+# no-op as far as the working tree is concerned.
+git config core.fileMode false
+
 # Keep the control repo current (single source of truth for push config).
 git pull --ff-only
 
