@@ -105,9 +105,12 @@ The web host has **no** database password. Not an empty one — absent.
   it.
 - `/etc/servicedesk/servicedesk.env` on the web host has no `SD_DB_PASSWORD`
   line.
-- The MySQL grant is scoped to the **middleware** host's /16, not the web
+- The MySQL grant is scoped to the **middleware** host's /24, not the web
   host's. The web host could not connect even if it somehow learned the
-  password.
+  password. In a ring-fenced estate the grant is derived per ring, so `dev`'s
+  middleware is not authorised against `prod`'s database either — the security
+  groups already drop that packet, but a grant looser than the fence is a trap
+  for whoever loosens the fence next.
 
 If you are debugging the web tier and feel the urge to paste a secret lookup
 back into `servicedesk-web.yml`, the header comment in that file is there to
@@ -275,7 +278,8 @@ the wrong host.
 - **The app password** comes from `servicedesk_db_password` in the consolidated
   secret if present, otherwise falls back to `mysql_root_password`. The account
   is still not root: its grant is `servicedesk.*` only, and now only from the
-  middleware host's /16.
+  middleware host's /24 — which in a multi-ring estate is one ring's middleware
+  subnet rather than the whole VPC.
 - **The db host runs Oracle MySQL**, not MariaDB, because `ubuntu-mysql.yml`
   installs `mysql-server`. The role probes for `mysql.service` then
   `mariadb.service` rather than mapping from the distro.

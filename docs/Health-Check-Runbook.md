@@ -883,8 +883,13 @@ payload to the web host; config `/etc/servicedesk/servicedesk.env`
 `/stats`, `/health`; the only host with a MySQL credential.
 
 **DB.** Unit `mysql`; port 3306; schema `servicedesk` with tables `users`,
-`tickets`, `comments`; account `sdapp`@`10.%` (derived from the **middleware**
-host's /16) with `servicedesk.*:ALL` and `mysql_native_password`; drop-in
+`tickets`, `comments`; account `sdapp`@`<middleware /24>.%` — the first three
+octets of the **middleware** host's address, and in a ring-fenced estate the
+middleware host in the *same ring*. Run
+`SELECT user, host FROM mysql.user WHERE user='sdapp';` to see the live value;
+a bare `10.%` means the derivation fell back and the middleware was not in the
+inventory when `servicedesk-db.yml` ran. Privileges `servicedesk.*:ALL`,
+plugin `mysql_native_password`; drop-in
 `/etc/mysql/mysql.conf.d/zz-servicedesk.cnf`; socket
 `/var/run/mysqld/mysqld.sock`.
 

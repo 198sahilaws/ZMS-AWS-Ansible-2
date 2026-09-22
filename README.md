@@ -232,7 +232,7 @@ Flask + gunicorn, split across three hosts. Full detail in
 
 | Playbook | Target | What it does |
 |---|---|---|
-| `playbooks/servicedesk-db.yml` | `role_db` ∩ `distro_ubuntu` | Database, app account, MySQL drop-in. Grant is scoped to the **middleware** host's /16. |
+| `playbooks/servicedesk-db.yml` | `role_db` ∩ `distro_ubuntu` | Database, app account, MySQL drop-in. Grant is scoped to the **middleware** host's /24, and in a ring-fenced estate to the middleware host in the same ring. |
 | `playbooks/servicedesk-middleware.yml` | `role_middleware` ∩ `distro_ubuntu` | Business-logic tier on **:8091**. Owns the schema, the seed and the only database credential in the estate. |
 | `playbooks/servicedesk-web.yml` | `role_web` ∩ `distro_ubuntu` | Frontend tier on **:8090**. Renders HTML from the middleware over HTTP; **no** database credentials. |
 | `playbooks/servicedesk-client.yml` | `role_client` ∩ `distro_ubuntu` | `sd-traffic.timer`, a real HTTP client firing every 2 min with jitter. |

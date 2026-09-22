@@ -53,3 +53,19 @@ keyed_groups:
     prefix: role
   - key: tags.Environment
     prefix: env
+  # APPLICATION ENVIRONMENT RING -> appenv_prod, appenv_uat, appenv_dev.
+  #
+  # A SECOND environment axis, and the distinction matters. `Environment` above
+  # is the ESTATE's identity — it is the tag this inventory FILTERS on, so every
+  # host the control node can see already shares one value and env_* is a group
+  # of everything. `AppEnv` is the application ring WITHIN an estate, set only by
+  # deployments/multi-environment-ring-fencing. Reusing `Environment` for the
+  # rings would have made the filter above match nothing at all.
+  #
+  # Hosts without the tag (every other deployment) simply join no appenv_* group,
+  # so this entry is inert everywhere else. Where it does apply:
+  #     --limit 'role_web:&appenv_prod'     one ring's web tier
+  #     --limit 'appenv_dev'                one whole ring
+  - key: tags.AppEnv
+    prefix: appenv
+    separator: "_"

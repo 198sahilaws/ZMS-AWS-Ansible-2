@@ -58,6 +58,13 @@ sd_db_distro_group: distro_ubuntu
 sd_middleware_group: role_middleware
 sd_middleware_distro_group: distro_ubuntu
 
+# Fallbacks only. vars/servicedesk.yml defines both and, being a vars_file, wins
+# over these. They exist so the role does not blow up on an undefined variable if
+# it is ever run without that file — in which case the peer lookups simply are
+# not ring-scoped, which is correct for an estate that has no rings.
+sd_ring_group: ""
+sd_ring_peers: "{{ groups['all'] | default([]) }}"
+
 sd_seed_users: 40
 sd_seed_tickets: 500
 sd_seed_days: 90

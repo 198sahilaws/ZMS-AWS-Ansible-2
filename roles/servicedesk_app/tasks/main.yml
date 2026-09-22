@@ -27,22 +27,32 @@
     quiet: true
 
 # --- resolve the tier below this one -----------------------------------------
+#
+# Both lookups intersect with sd_ring_peers, which confines them to this host's
+# own environment ring when there is one and is a no-op when there is not. See
+# vars/servicedesk.yml. Without it, a ring-fenced estate would wire every ring's
+# web tier to whichever middleware host sorted first across all rings.
 
 - name: Resolve the database host from the inventory
   ansible.builtin.set_fact:
     sd_db_host: >-
       {{ (groups[sd_db_group] | default([]))
          | intersect(groups[sd_db_distro_group] | default([]))
+         | intersect(sd_ring_peers)
          | first | default('', true) }}
   when: sd_tier == 'middleware'
 
 - name: Fail with an actionable message when no database host was discovered
   ansible.builtin.fail:
     msg: >-
-      No host is in both {{ sd_db_group }} and {{ sd_db_distro_group }}, so the
-      service desk has nowhere to store data. Deploy an Ubuntu host with
+      No host is in both {{ sd_db_group }} and {{ sd_db_distro_group }}
+      {{ ('within ' ~ sd_ring_group) if sd_ring_group | default('', true) | length > 0 else '' }},
+      so the service desk has nowhere to store data. Deploy an Ubuntu host with
       Role=db (deployments/web-app does this), or repoint sd_db_group /
-      sd_db_distro_group in vars/servicedesk.yml.
+      sd_db_distro_group in vars/servicedesk.yml. In a ring-fenced estate this
+      also fires when the ring itself has no db host — every ring gets a full
+      copy of the stack, so a missing one is a Terraform problem, not an
+      Ansible one.
   when:
     - sd_tier == 'middleware'
     - sd_db_host | length == 0
@@ -52,6 +62,7 @@
     sd_middleware_host: >-
       {{ (groups[sd_middleware_group] | default([]))
          | intersect(groups[sd_middleware_distro_group] | default([]))
+         | intersect(sd_ring_peers)
          | first | default('', true) }}
   when: sd_tier == 'web'
 
@@ -59,7 +70,9 @@
   ansible.builtin.fail:
     msg: >-
       No host is in both {{ sd_middleware_group }} and
-      {{ sd_middleware_distro_group }}, so the web tier has nothing to render.
+      {{ sd_middleware_distro_group }}
+      {{ ('within ' ~ sd_ring_group) if sd_ring_group | default('', true) | length > 0 else '' }},
+      so the web tier has nothing to render.
       The group comes from the EC2 tag Role=middleware — check that
       ubuntu_server_roles in the Terraform deployment includes "middleware"
       and that `ansible-inventory --graph` shows {{ sd_middleware_group }}.

@@ -27,26 +27,43 @@
     - ../vars/servicedesk.yml
   tasks:
     - name: Resolve the web and middleware hosts
+      # Ring-scoped via sd_ring_peers (vars/servicedesk.yml), and this play is
+      # the reason that matters most. In a ring-fenced estate it runs once per
+      # ring — each ring's client verifies its own web and middleware and no
+      # others. Without the intersect, every ring's client would probe the same
+      # one web host, two of them across a fence they are not allowed to cross,
+      # and the run would report a broken application instead of a working fence.
       ansible.builtin.set_fact:
         sd_app_host: >-
           {{ (groups[sd_app_group] | default([]))
              | intersect(groups[sd_app_distro_group] | default([]))
+             | intersect(sd_ring_peers)
              | first | default('', true) }}
         sd_mw_host: >-
           {{ (groups[sd_middleware_group] | default([]))
              | intersect(groups[sd_middleware_distro_group] | default([]))
+             | intersect(sd_ring_peers)
              | first | default('', true) }}
+
+    - name: Say which ring is being verified
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'ring ' ~ sd_ring_group if sd_ring_group | length > 0 else 'single-ring estate' }}:
+          client {{ inventory_hostname }} -> web {{ sd_app_host }} -> middleware {{ sd_mw_host }}
 
     - name: Assert a web host exists
       ansible.builtin.assert:
         that: [sd_app_host | length > 0]
-        fail_msg: "No host in {{ sd_app_group }} & {{ sd_app_distro_group }}."
+        fail_msg: >-
+          No host in {{ sd_app_group }} & {{ sd_app_distro_group }}
+          {{ ('within ' ~ sd_ring_group) if sd_ring_group | length > 0 else '' }}.
 
     - name: Assert a middleware host exists
       ansible.builtin.assert:
         that: [sd_mw_host | length > 0]
         fail_msg: >-
-          No host in {{ sd_middleware_group }} & {{ sd_middleware_distro_group }}.
+          No host in {{ sd_middleware_group }} & {{ sd_middleware_distro_group }}
+          {{ ('within ' ~ sd_ring_group) if sd_ring_group | length > 0 else '' }}.
           deployments/web-app must include "middleware" in ubuntu_server_roles,
           and the EC2 tag is case-sensitive: Role=middleware gives
           role_middleware, Role=Middleware gives role_Middleware and matches
@@ -81,7 +98,10 @@
           The web and middleware tiers both answered, so this is the database
           leg — check that servicedesk-db.yml ran, that MySQL is listening on
           0.0.0.0, and that the grant covers the MIDDLEWARE host (it is scoped
-          to that host's /16, and no longer to the web host's).
+          to that host's /24, and no longer to the web host's). In a ring-fenced
+          estate the grant is derived per ring, so confirm the pattern on
+          {{ sd_mw_host }}'s database matches {{ sd_mw_host }} and not another
+          ring's middleware.
 
     - name: Fetch /health directly from the middleware, bypassing the web tier
       ansible.builtin.uri:

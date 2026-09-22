@@ -152,6 +152,58 @@
     check_implicit_admin: true
   no_log: true
 
+# --- remove accounts left behind by an earlier, wider pattern ------------------
+#
+# In MySQL the host pattern is PART OF THE ACCOUNT IDENTITY, so narrowing
+# sd_db_client_pattern does not edit the existing account — it creates a second
+# one and leaves the first in place with its original privileges. Two narrowings
+# have happened: web host -> middleware host when the tiers were split, and /16
+# -> /24 when the ring-fenced deployment made 10.90.% span prod, uat and dev.
+# Without this sweep an estate converged before either change keeps a live
+# `sdapp` account authorised from the wider range, and the tightening is
+# cosmetic.
+#
+# Scoped to sd_db_user alone, so it cannot touch root, mysql.sys or anything a
+# different lab created.
+- name: Find superseded accounts for this application user
+  community.mysql.mysql_query:
+    query: "SELECT host FROM mysql.user WHERE user = %s AND host <> %s"
+    positional_args:
+      - "{{ sd_db_user }}"
+      - "{{ sd_db_client_pattern }}"
+    login_user: root
+    login_password: "{{ sd_mysql_root_password }}"
+    login_unix_socket: "{{ sd_db_socket }}"
+    login_db: mysql
+  register: sd_db_stale_accounts
+  changed_when: false
+  no_log: true
+
+- name: Report the superseded accounts before removing them
+  # Outside no_log on purpose — host patterns are not secrets, and a silent DROP
+  # USER is exactly the kind of thing you want to find in the converge log later.
+  ansible.builtin.debug:
+    msg: >-
+      Removing {{ sd_db_stale_accounts.query_result[0] | length }} superseded
+      account(s) '{{ sd_db_user }}'@{{ sd_db_stale_accounts.query_result[0]
+      | map(attribute='host') | list }}; the current one is
+      '{{ sd_db_user }}'@'{{ sd_db_client_pattern }}'.
+  when: (sd_db_stale_accounts.query_result[0] | default([])) | length > 0
+
+- name: Remove the superseded accounts
+  community.mysql.mysql_user:
+    name: "{{ sd_db_user }}"
+    host: "{{ item.host }}"
+    state: absent
+    login_user: root
+    login_password: "{{ sd_mysql_root_password }}"
+    login_unix_socket: "{{ sd_db_socket }}"
+    check_implicit_admin: true
+  loop: "{{ sd_db_stale_accounts.query_result[0] | default([]) }}"
+  loop_control:
+    label: "{{ sd_db_user }}@{{ item.host }}"
+  no_log: true
+
 - name: Detect whether firewalld is active # noqa command-instead-of-module
   # No module can ASK whether a unit is active without also trying to manage it.
   # Ubuntu's ufw is inactive and Amazon Linux has no firewalld at all, so this

@@ -13,9 +13,13 @@ sd_db_password: ""
 sd_mysql_root_password: ""
 
 # Which hosts the application account may connect FROM. Derived by the playbook
-# from the app host's own address (its /16), so it needs no hardcoded CIDR and
-# survives an instance replacement inside the same VPC. Not '%': the grant is a
-# boundary, not a formality.
+# from the MIDDLEWARE host's own address (its /24), so it needs no hardcoded CIDR
+# and survives an instance replacement inside the same subnet. Not '%': the grant
+# is a boundary, not a formality.
+#
+# This default is only ever used when the playbook has not run — it is
+# deliberately the widest value in the file, so if you ever see '10.%' on a live
+# server the derivation failed rather than the policy being lax.
 sd_db_client_pattern: "10.%"
 
 # Where the drop-in config goes. A drop-in rather than editing my.cnf in place:

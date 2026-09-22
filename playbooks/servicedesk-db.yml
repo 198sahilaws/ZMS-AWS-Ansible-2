@@ -9,7 +9,8 @@
 # servicedesk-middleware.yml, which has the venv and schema.sql.
 #
 # Run before servicedesk-middleware.yml. The grant below is scoped to the
-# MIDDLEWARE host's /16, not the web host's — see sd_db_client_pattern.
+# MIDDLEWARE host's /24, not the web host's, and in a ring-fenced estate to the
+# middleware host in THIS host's own ring — see sd_db_client_pattern.
 
 - name: Prepare the service desk database host
   # Role AND distro intersection — role_db spans every distro in the estate, so
@@ -47,18 +48,44 @@
     - name: Resolve the effective application password and client pattern
       ansible.builtin.set_fact:
         sd_db_password: "{{ sd_db_password_from_secret if sd_db_password_from_secret | length > 0 else sd_mysql_root_password }}"
-        # Grant the app account only from the MIDDLEWARE host's own /16 —
+        # Grant the app account only from the MIDDLEWARE host's own /24 —
         # changed from the web host when the tiers were split, because the web
         # host no longer connects to MySQL at all and granting it access would
         # quietly re-open the path this design closes.
         #
+        # THREE octets, not two. A /16 was adequate while one estate held one
+        # copy of the app, but the ring-fenced estate puts prod, uat and dev in
+        # one 10.90.0.0/16 — so '10.90.%' would authorise DEV's middleware
+        # against PROD's database. The security groups drop that packet, but a
+        # grant looser than the fence is a trap for whoever loosens the fence
+        # next. A /24 is exactly one tier's subnet in one ring.
+        #
         # Derived from the discovered address rather than a hardcoded CIDR, so
-        # it is correct in every deployment (10.190/10.191/10.192) and survives
-        # an instance replacement inside the same VPC. Still a /16 rather than
-        # a /32 for that same reason: a replaced instance keeps the subnet, not
-        # the address.
+        # it is correct in every deployment (10.0/10.90/10.191/10.192) and
+        # survives an instance replacement: a replacement keeps its subnet even
+        # though it does not keep its address, which is also why this is not
+        # a /32.
+        #
+        # sd_ring_peers keeps this inside THIS db host's own ring — see the
+        # explanation in vars/servicedesk.yml. Without it a three-ring estate
+        # would derive every ring's grant from whichever middleware host sorted
+        # first, and two of the three grants would be for the wrong subnet.
         sd_db_client_pattern: >-
-          {{ ((groups[sd_middleware_group] | default([])) | intersect(groups[sd_middleware_distro_group] | default([])) | first | default('10.0.0.0', true)).split('.')[0:2] | join('.') }}.%
+          {{ ((groups[sd_middleware_group] | default([]))
+              | intersect(groups[sd_middleware_distro_group] | default([]))
+              | intersect(sd_ring_peers)
+              | first
+              | default('10.0.0.0', true)).split('.')[0:3] | join('.') }}.%
       no_log: true
+
+    - name: Show which subnet the grant will admit
+      # Deliberately outside the no_log above: the pattern is not a secret and
+      # it is the single most useful thing to see when the middleware cannot
+      # connect. An unexpectedly wide pattern here (10.0.0.% from the fallback)
+      # means the middleware host was not in the inventory when this ran.
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: granting '{{ sd_db_user }}'@'{{ sd_db_client_pattern }}'
+          {{ '(ring ' ~ sd_ring_group ~ ')' if sd_ring_group | length > 0 else '(single-ring estate)' }}
   roles:
     - servicedesk_db
