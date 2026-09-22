@@ -218,6 +218,59 @@ ansible-playbook playbooks/amazonlinux-mysql.yml -e target=role_db
 > skipped per host.
 
 
+## Demo applications
+
+Two Python applications ride on top of the role playbooks above. They exist to
+put real, continuously changing east-west traffic on the estate rather than
+leaving the service ports idle.
+
+### Service Desk — three tiers, `deployments/web-app`
+
+Flask + gunicorn, split across three hosts. Full detail in
+[`docs/Service-Desk-Lab.md`](docs/Service-Desk-Lab.md); triage in
+[`docs/Health-Check-Runbook.md`](docs/Health-Check-Runbook.md).
+
+| Playbook | Target | What it does |
+|---|---|---|
+| `playbooks/servicedesk-db.yml` | `role_db` ∩ `distro_ubuntu` | Database, app account, MySQL drop-in. Grant is scoped to the **middleware** host's /16. |
+| `playbooks/servicedesk-middleware.yml` | `role_middleware` ∩ `distro_ubuntu` | Business-logic tier on **:8091**. Owns the schema, the seed and the only database credential in the estate. |
+| `playbooks/servicedesk-web.yml` | `role_web` ∩ `distro_ubuntu` | Frontend tier on **:8090**. Renders HTML from the middleware over HTTP; **no** database credentials. |
+| `playbooks/servicedesk-client.yml` | `role_client` ∩ `distro_ubuntu` | `sd-traffic.timer`, a real HTTP client firing every 2 min with jitter. |
+| `playbooks/servicedesk-verify.yml` | `role_client` ∩ `distro_ubuntu` | End-to-end asserts, outside-in. **Run by hand** — see below. |
+| `playbooks/servicedesk-app.yml` | — | Compatibility alias: imports the middleware and web plays in order. |
+
+```
+client --HTTP :8090--> web --HTTP :8091--> middleware --MySQL :3306--> db
+```
+
+Run them in that order; each step depends on the one before it. One role,
+`roles/servicedesk_app`, installs the same payload on the web and middleware
+hosts and `SD_TIER` in the environment file decides which Flask app `wsgi.py`
+imports — the same pattern as `roles/zms_microservice`.
+
+`role_middleware` comes from the EC2 tag `Role=middleware`, set by
+`ubuntu_server_roles` in the Terraform repo's `deployments/web-app`. The group
+name is derived verbatim, so `Role=Middleware` matches nothing.
+
+### ZMS microservices — `zms-app-*.yml`
+
+Catalog, inventory and orders behind a frontend, across the MariaDB hosts. Same
+shape of contract: `vars/zms-app.yml` is the single source of truth and
+`zms-app-verify.yml` is run by hand.
+
+### Both
+
+The deploy playbooks are listed in **both** `orchestrate.yml` and the
+`LINUX_PLAYS` array in `scripts/converge.sh`, so the apps self-heal on the hourly
+timer. Those two lists are maintained by hand and the timer runs `converge.sh` —
+a playbook added to only one of them behaves differently on a schedule than it
+does by hand.
+
+The `*-verify.yml` playbooks are deliberately in neither. They end in asserts, so
+during a deliberate failure demo they would mark the `ansible-estate` unit failed
+— noise rather than signal.
+
+
 ## Automated execution (systemd timers)
 
 The control node runs the playbooks on a schedule via systemd. Unit files are in
@@ -250,9 +303,13 @@ user has passwordless `sudo` (default on Ubuntu AMIs, needed for `become`); and
 
 - `ansible-bootstrap.*` runs `scripts/reconverge.sh` — git pull, refresh
   collections, re-apply `bootstrap.yml` (self-heals the control node).
-- `ansible-estate.*` runs `site.yml` in rolling batches. To alert-only on drift,
-  change its `ExecStart` to `... site.yml --check --diff` first, then a second
-  enforce timer.
+- `ansible-estate.*` runs **`scripts/converge.sh`**, not `site.yml` and not
+  `orchestrate.yml`. The runner invokes each playbook as its own
+  `ansible-playbook` process so one failing role cannot abort the rest, then
+  exits non-zero if anything failed. The list it walks is the `LINUX_PLAYS` /
+  `WINDOWS_PLAYS` arrays inside that script — **that array, not
+  `orchestrate.yml`, is what determines whether a playbook runs on a schedule.**
+  Keep the two in step when you add one.
 
 ### Alternatives
 

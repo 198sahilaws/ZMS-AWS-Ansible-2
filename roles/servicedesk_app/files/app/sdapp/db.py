@@ -1,8 +1,14 @@
 """Database access.
 
+MIDDLEWARE TIER ONLY. This module is imported by sdapp.api and by nothing else;
+sdapp.web reaches the data through sdapp.client over HTTP. The file is present
+on the web host because the payload is byte-identical across both tiers, but
+importing it there would fail at the first connect() — that host has no
+SD_DB_PASSWORD in its environment at all.
+
 A connection per request, not a pool. In a lab that is the POINT: every request
-opens a real TCP connection from the web host to the database host, so the flow
-logs show connection churn rather than one long-lived socket that a
+opens a real TCP connection from the middleware host to the database host, so
+the flow logs show connection churn rather than one long-lived socket that a
 microsegmentation agent sees once and never again.
 """
 import contextlib

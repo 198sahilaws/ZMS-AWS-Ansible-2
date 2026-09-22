@@ -1,8 +1,14 @@
 -- Service Desk lab schema.
 --
 -- Three tables on purpose. This app exists to put realistic, continuously
--- changing data in front of MySQL and to make the web host talk to the database
--- host over the network; it is not trying to be a real ITSM product.
+-- changing data in front of MySQL and to make the tiers talk to each other over
+-- the network; it is not trying to be a real ITSM product.
+--
+-- WHERE THIS RUNS: the MIDDLEWARE host, not the web host. sdapp/api.py is the
+-- only module that opens a database connection, so the bootstrap that applies
+-- this file (`python -m sdapp.bootstrap`) runs there too. The web host has the
+-- file on disk — the payload is identical on both tiers — but no credential to
+-- apply it with.
 --
 -- PORTABILITY: the target is Oracle MySQL 8 on the Ubuntu db host
 -- (playbooks/ubuntu-mysql.yml installs mysql-server), but this is kept to

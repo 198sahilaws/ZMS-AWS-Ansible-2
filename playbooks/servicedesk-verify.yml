@@ -6,6 +6,19 @@
 # DELIBERATELY NOT IN scripts/converge.sh OR orchestrate.yml. It ends in
 # asserts, so it would mark the ansible-estate unit failed during a deliberate
 # failure demo (stop MySQL, watch the app degrade). Run it by hand.
+#
+# EVERY CHECK IS MADE FROM THE CLIENT HOST, over the network, on the same ports
+# a user would use. That is the point: it exercises the security groups, the
+# listeners and the cross-host hops, not just the processes.
+#
+# The chain under test is three hops long:
+#
+#   this host --:8090--> web --:8091--> middleware --:3306--> db
+#
+# so the asserts below walk it OUTSIDE-IN and name the leg that broke. The
+# order matters: a middleware outage also makes database.reachable false, so
+# the middleware leg is asserted first — otherwise a failure at hop two would
+# be reported as a database problem and send you to the wrong host.
 
 - name: Verify the service desk end to end
   hosts: "{{ target | default(sd_client_group ~ ':&' ~ sd_client_distro_group) }}"
@@ -13,17 +26,31 @@
   vars_files:
     - ../vars/servicedesk.yml
   tasks:
-    - name: Resolve the application host
+    - name: Resolve the web and middleware hosts
       ansible.builtin.set_fact:
         sd_app_host: >-
           {{ (groups[sd_app_group] | default([]))
              | intersect(groups[sd_app_distro_group] | default([]))
              | first | default('', true) }}
+        sd_mw_host: >-
+          {{ (groups[sd_middleware_group] | default([]))
+             | intersect(groups[sd_middleware_distro_group] | default([]))
+             | first | default('', true) }}
 
-    - name: Assert an application host exists
+    - name: Assert a web host exists
       ansible.builtin.assert:
         that: [sd_app_host | length > 0]
         fail_msg: "No host in {{ sd_app_group }} & {{ sd_app_distro_group }}."
+
+    - name: Assert a middleware host exists
+      ansible.builtin.assert:
+        that: [sd_mw_host | length > 0]
+        fail_msg: >-
+          No host in {{ sd_middleware_group }} & {{ sd_middleware_distro_group }}.
+          deployments/web-app must include "middleware" in ubuntu_server_roles,
+          and the EC2 tag is case-sensitive: Role=middleware gives
+          role_middleware, Role=Middleware gives role_Middleware and matches
+          nothing.
 
     - name: Fetch /health from the client host
       ansible.builtin.uri:
@@ -32,6 +59,18 @@
         status_code: [200, 503]
       register: sd_v_health
 
+    - name: Assert the web tier can reach the middleware
+      ansible.builtin.assert:
+        that:
+          - sd_v_health.json.middleware.reachable
+        fail_msg: >-
+          The web tier answered but cannot reach the middleware at
+          {{ sd_v_health.json.middleware.url | default('<unset>') }}:
+          {{ sd_v_health.json.database.error | default('no detail') }}.
+          This is hop two, not the database — check that
+          servicedesk-middleware.yml ran and that gunicorn is listening on
+          {{ sd_mw_host }}:{{ sd_middleware_port }}.
+
     - name: Assert the application reports a healthy database
       ansible.builtin.assert:
         that:
@@ -39,8 +78,31 @@
           - sd_v_health.json.database.reachable
         fail_msg: >-
           Service desk is degraded: {{ sd_v_health.json.database | default({}) }}.
-          The app is up (it answered), so this is the database leg — check that
-          servicedesk-db.yml ran and MySQL is listening on 0.0.0.0.
+          The web and middleware tiers both answered, so this is the database
+          leg — check that servicedesk-db.yml ran, that MySQL is listening on
+          0.0.0.0, and that the grant covers the MIDDLEWARE host (it is scoped
+          to that host's /16, and no longer to the web host's).
+
+    - name: Fetch /health directly from the middleware, bypassing the web tier
+      ansible.builtin.uri:
+        url: "http://{{ sd_mw_host }}:{{ sd_middleware_port }}/health"
+        return_content: true
+        status_code: [200, 503]
+      register: sd_v_mw_health
+
+    - name: Assert the middleware is healthy on its own port
+      ansible.builtin.assert:
+        that:
+          - sd_v_mw_health.status == 200
+          - sd_v_mw_health.json.tier == 'middleware'
+          - sd_v_mw_health.json.database.reachable
+        fail_msg: >-
+          The middleware is unhealthy when called directly on
+          {{ sd_mw_host }}:{{ sd_middleware_port }}:
+          {{ sd_v_mw_health.json | default('') }}.
+          If the previous asserts passed and this one did not, the two tiers
+          disagree — most likely SD_TIER is wrong in
+          {{ sd_app_config_dir }}/servicedesk.env on one of them.
 
     - name: Assert the database actually holds seeded data
       ansible.builtin.assert:
@@ -48,7 +110,9 @@
           - sd_v_health.json.database.tickets | int > 0
         fail_msg: >-
           The database is reachable but holds no tickets. Run
-          playbooks/servicedesk-app.yml (its seed step) or, to force a reseed:
+          playbooks/servicedesk-middleware.yml (its seed step) or, to force a
+          reseed, ON THE MIDDLEWARE HOST {{ sd_mw_host }} — the web host has no
+          credentials and no venv module that can reach MySQL:
           {{ sd_app_root }}/venv/bin/python -m sdapp.seed --force
 
     - name: Fetch /stats

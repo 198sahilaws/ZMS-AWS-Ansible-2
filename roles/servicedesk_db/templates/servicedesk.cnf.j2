@@ -9,12 +9,12 @@
 # same directory setting bind-address = 127.0.0.1. A numeric prefix loses to it.
 [mysqld]
 # THE SINGLE MOST COMMON LAB FAILURE. MySQL on Ubuntu listens only on 127.0.0.1
-# out of the box, so the web host gets "Can't connect to MySQL server" that
+# out of the box, so the middleware host gets "Can't connect to MySQL server" that
 # looks exactly like a security group or routing problem and is neither.
 bind-address = 0.0.0.0
 port = {{ sd_db_port }}
 
-# THE SECOND MOST COMMON. Without this, every connection from the web host
+# THE SECOND MOST COMMON. Without this, every connection from the middleware
 # triggers a reverse DNS lookup that has no answer in the VPC, so connects take
 # seconds and time out under load. Grants must then be by IP pattern, which is
 # what '{{ sd_db_user }}'@'{{ sd_db_client_pattern }}' already is.

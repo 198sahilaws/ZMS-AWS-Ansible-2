@@ -1,0 +1,29 @@
+---
+# Deploy the service desk WEB tier: the HTML frontend and the /api pass-through.
+#
+#   ansible-playbook playbooks/servicedesk-web.yml
+#
+# Run AFTER servicedesk-middleware.yml. This host renders pages from JSON it
+# fetches over HTTP from the middleware host; with nothing listening on 8091 it
+# will still install and start, and answer 503 saying the middleware is
+# unreachable — which is a correct answer, but not a useful converge.
+#
+# NOTE WHAT IS NOT HERE: no aws_secret lookup, no sd_db_password, no
+# assert-a-password pre_task. The web tier holds no database credentials and
+# this play is where that is enforced — /etc/servicedesk/servicedesk.env on
+# this host has no SD_DB_PASSWORD line at all. If a future change needs the web
+# tier to reach MySQL directly, that is a design decision to argue about, not a
+# lookup to quietly paste in from servicedesk-middleware.yml.
+#
+# The role is the same one the middleware play uses; sd_tier below is the whole
+# difference. See roles/servicedesk_app/defaults/main.yml.
+
+- name: Deploy the service desk web tier
+  hosts: "{{ target | default(sd_app_group ~ ':&' ~ sd_app_distro_group) }}"
+  gather_facts: true
+  vars_files:
+    - ../vars/servicedesk.yml
+  vars:
+    sd_tier: web
+  roles:
+    - servicedesk_app

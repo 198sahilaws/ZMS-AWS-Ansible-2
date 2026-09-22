@@ -1,38 +1,21 @@
 ---
-# Deploy the service desk web application, create its tables and seed them.
+# COMPATIBILITY ALIAS. The service desk is now three tiers, not two.
 #
-#   ansible-playbook playbooks/servicedesk-app.yml
-#   ansible-playbook playbooks/servicedesk-app.yml -e sd_seed_tickets=2000
+# This play used to install the whole application onto the Role=web host: HTML,
+# business logic, schema, seed and the database password, all in one place.
+# That work is now split across two plays and two hosts:
 #
-# Run AFTER servicedesk-db.yml — the database and the application account must
-# exist before the tables can be created.
+#   playbooks/servicedesk-middleware.yml   Role=middleware, :8091, owns MySQL
+#   playbooks/servicedesk-web.yml          Role=web,        :8090, owns HTML
 #
-# Idempotent and safe hourly: the payload only redeploys when a file changes,
-# pip no-ops once the venv is built, CREATE TABLE IF NOT EXISTS is a no-op, and
-# the seeder exits without writing once tickets exist.
+# The file is kept because runbooks, muscle memory and the training guide all
+# say "servicedesk-app.yml", and a file-not-found is a worse answer than doing
+# the right thing. It imports both plays in the only valid order.
+#
+# scripts/converge.sh and orchestrate.yml list the two real plays, NOT this
+# one — importing it there as well would deploy everything twice per converge.
+#
+# Safe to delete once nothing refers to it.
 
-- name: Deploy the service desk application
-  hosts: "{{ target | default(sd_app_group ~ ':&' ~ sd_app_distro_group) }}"
-  gather_facts: true
-  vars_files:
-    - ../vars/servicedesk.yml
-  vars:
-    # Field-scoped inline lookups — see the note in servicedesk-db.yml.
-    sd_mysql_root_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).mysql_root_password | default('', true) }}"
-    sd_db_password_from_secret: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).servicedesk_db_password | default('', true) }}"
-  pre_tasks:
-    - name: Resolve the effective application password
-      ansible.builtin.set_fact:
-        sd_db_password: "{{ sd_db_password_from_secret if sd_db_password_from_secret | length > 0 else sd_mysql_root_password }}"
-      no_log: true
-
-    - name: Assert a database password is available
-      ansible.builtin.assert:
-        that:
-          - sd_db_password | length > 0
-        fail_msg: >-
-          No database password available. Set var.mysql_root_password in
-          terraform.tfvars and re-apply so it reaches the consolidated secret.
-      no_log: true
-  roles:
-    - servicedesk_app
+- ansible.builtin.import_playbook: servicedesk-middleware.yml
+- ansible.builtin.import_playbook: servicedesk-web.yml

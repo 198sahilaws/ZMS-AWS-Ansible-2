@@ -1,198 +1,180 @@
-"""The service desk web application.
+"""The service desk WEB tier: HTML rendering and nothing else.
 
-Routes are split between a small HTML UI (what a person opens) and a JSON API
-(what the traffic generator on the client host drives). Both hit the same
-queries, so generated traffic exercises the same code path a human would.
+This tier has no database driver, no credentials and no SQL. It renders the
+queue and ticket pages from JSON fetched over HTTP from the middleware tier,
+and it forwards /api/* and /stats through unchanged so that every caller which
+used to talk to the combined app on :8090 still works.
+
+WHY THE PROXY FORWARDS BYTES RATHER THAN RE-SERIALISING
+  sd-traffic.py on the client host and playbooks/servicedesk-verify.yml both
+  assert on the shape of /api/tickets and /stats. Re-encoding the payload here
+  would be an opportunity to change it by accident. Passing the middleware's
+  body through verbatim, with its status code, makes shape drift impossible:
+  the contract is owned by exactly one tier.
+
+TWO FAILURE MODES, DELIBERATELY DISTINGUISHED
+  503 from the middleware  -> the database is down.     "Service degraded"
+  no answer at all         -> the middleware is down.   "Middleware unreachable"
+  Both render as a 503 so the "watch it degrade" demo behaves the same from the
+  outside, but the detail line names the tier that actually failed. Before the
+  split there was only one thing that could break; now there are two, and a lab
+  whose error page cannot tell you which is a worse lab.
 """
-import datetime as dt
+from flask import Flask, Response, jsonify, render_template, request
 
-import pymysql
-from flask import Flask, abort, jsonify, render_template, request, url_for
-
-from . import config, db
+from . import client, config
 
 app = Flask(__name__)
 
+# Mirrored from sdapp.api rather than imported: importing api would pull in
+# pymysql and db on a host that deliberately has neither configured. These are
+# presentation-order lists for the filter bar, not business rules.
 STATUSES = ["new", "open", "pending", "resolved", "closed"]
 PRIORITIES = ["P1", "P2", "P3", "P4"]
-OPEN_STATUSES = ("new", "open", "pending")
+
+PROXY_METHODS = ["GET", "POST"]
 
 
 # --- helpers -----------------------------------------------------------------
 
-def _next_ref():
-    """Next SD-nnnnnn. MAX+1 rather than an auto-increment mirror so a
-    force-reseed cannot produce a duplicate ref against a stale sequence."""
-    row = db.query_one("SELECT MAX(CAST(SUBSTRING(ref, 4) AS UNSIGNED)) AS n FROM tickets")
-    return "SD-%06d" % ((row["n"] or 0) + 1)
+def _degraded_payload(detail, tier):
+    """The JSON body returned when this tier cannot serve a request.
+
+    Keeps the 'database' object that /health and the API have always carried,
+    because monitors key off database.reachable. When the middleware is the
+    thing that is missing we still say the database is unreachable — from here
+    it is, and the 'error' string says why.
+    """
+    return {"service": "servicedesk", "tier": "web", "status": "degraded",
+            "failed_tier": tier,
+            "middleware": {"url": config.MIDDLEWARE_URL or None,
+                           "reachable": tier != "middleware"},
+            "database": {"reachable": False, "database": config.DB_NAME,
+                         "error": detail}}
 
 
-def _queue(status=None, priority=None, assignee=None, limit=50):
-    where, args = [], []
-    if status == "open":
-        where.append("t.status IN %s")
-        args.append(OPEN_STATUSES)
-    elif status in STATUSES:
-        where.append("t.status = %s")
-        args.append(status)
-    if priority in PRIORITIES:
-        where.append("t.priority = %s")
-        args.append(priority)
-    if assignee:
-        where.append("a.username = %s")
-        args.append(assignee)
-    clause = ("WHERE " + " AND ".join(where)) if where else ""
-    args.append(limit)
-    return db.query(
-        "SELECT t.ref, t.subject, t.status, t.priority, t.category, "
-        "       t.created_at, t.updated_at, "
-        "       r.full_name AS requester, a.full_name AS assignee, "
-        "       (SELECT COUNT(*) FROM comments c WHERE c.ticket_id = t.id) AS comment_count "
-        "FROM tickets t "
-        "JOIN users r ON r.id = t.requester_id "
-        "LEFT JOIN users a ON a.id = t.assignee_id "
-        + clause +
-        " ORDER BY FIELD(t.priority, 'P1','P2','P3','P4'), t.created_at DESC "
-        "LIMIT %s", args)
+def _degraded_page(detail, tier):
+    return render_template("error.html", app_name=config.APP_NAME,
+                           detail=detail, failed_tier=tier), 503
 
 
-def _stats():
-    by_status = db.query("SELECT status, COUNT(*) AS n FROM tickets GROUP BY status")
-    by_priority = db.query(
-        "SELECT priority, COUNT(*) AS n FROM tickets "
-        "WHERE status IN %s GROUP BY priority", (OPEN_STATUSES,))
-    totals = db.query_one(
-        "SELECT (SELECT COUNT(*) FROM tickets) AS tickets, "
-        "       (SELECT COUNT(*) FROM comments) AS comments, "
-        "       (SELECT COUNT(*) FROM users) AS users")
-    return {
-        "totals": totals,
-        "by_status": {r["status"]: r["n"] for r in by_status},
-        "open_by_priority": {r["priority"]: r["n"] for r in by_priority},
-    }
+def _wants_json():
+    return request.path.startswith("/api/") or request.path == "/stats"
+
+
+@app.errorhandler(client.MiddlewareUnreachable)
+def middleware_down(exc):
+    detail = "middleware unreachable at %s — %s" % (
+        config.MIDDLEWARE_URL or "<unset SD_MIDDLEWARE_URL>", exc)
+    if _wants_json():
+        return jsonify(_degraded_payload(detail, "middleware")), 503
+    return _degraded_page(detail, "middleware")
 
 
 # --- HTML --------------------------------------------------------------------
-
-@app.errorhandler(pymysql.MySQLError)
-def database_down(exc):
-    """A database outage is a 503, never a 500 with a stack trace.
-
-    Registered globally so the JSON API and the HTML pages degrade the SAME way
-    — an earlier version only handled it on the index route, so stopping MySQL
-    gave a friendly page but a bare 500 on /api/tickets, which made the
-    "watch it degrade" demo inconsistent depending on what you happened to hit.
-    """
-    detail = "%s: %s" % (type(exc).__name__, exc)
-    wants_json = request.path.startswith("/api/") or request.path == "/stats"
-    if wants_json:
-        return jsonify({"service": "servicedesk", "status": "degraded",
-                        "database": {"reachable": False, "host": config.DB_HOST,
-                                     "database": config.DB_NAME, "error": detail}}), 503
-    return render_template("error.html", app_name=config.APP_NAME, detail=detail), 503
-
 
 @app.route("/")
 def index():
     status = request.args.get("status", "open")
     priority = request.args.get("priority") or None
-    rows = _queue(status=status, priority=priority)
-    stats = _stats()
-    return render_template("index.html", app_name=config.APP_NAME, tickets=rows,
-                           stats=stats, status=status, priority=priority,
+
+    queue = client.get("/api/tickets", {"status": status, "limit": 50,
+                                        **({"priority": priority} if priority else {})})
+    stats = client.get("/stats")
+    if not queue.ok or not stats.ok:
+        bad = queue if not queue.ok else stats
+        return _degraded_page(_upstream_detail(bad), "database")
+
+    return render_template("index.html", app_name=config.APP_NAME,
+                           tickets=queue.json(), stats=stats.json(),
+                           status=status, priority=priority,
                            statuses=STATUSES, priorities=PRIORITIES)
 
 
 @app.route("/ticket/<ref>")
 def ticket_detail(ref):
-    ticket = db.query_one(
-        "SELECT t.*, r.full_name AS requester, r.email AS requester_email, "
-        "       a.full_name AS assignee "
-        "FROM tickets t JOIN users r ON r.id = t.requester_id "
-        "LEFT JOIN users a ON a.id = t.assignee_id WHERE t.ref = %s", (ref,))
-    if not ticket:
-        abort(404)
-    comments = db.query(
-        "SELECT c.body, c.is_internal, c.created_at, u.full_name AS author, u.role "
-        "FROM comments c JOIN users u ON u.id = c.author_id "
-        "WHERE c.ticket_id = %s ORDER BY c.created_at", (ticket["id"],))
+    resp = client.get("/api/tickets/" + ref)
+    if resp.status == 404:
+        return render_template("error.html", app_name=config.APP_NAME,
+                               detail="No ticket with reference %s." % ref,
+                               failed_tier=None), 404
+    if not resp.ok:
+        return _degraded_page(_upstream_detail(resp), "database")
+
+    payload = resp.json()
     return render_template("ticket.html", app_name=config.APP_NAME,
-                           ticket=ticket, comments=comments)
+                           ticket=payload.get("ticket") or {},
+                           comments=payload.get("comments") or [])
 
 
-# --- JSON API ----------------------------------------------------------------
+def _upstream_detail(resp):
+    """Pull the middleware's own explanation out of its error body.
 
-@app.route("/api/tickets", methods=["GET"])
-def api_list():
-    return jsonify(_queue(status=request.args.get("status", "open"),
-                          priority=request.args.get("priority") or None,
-                          limit=min(int(request.args.get("limit", 25)), 200)))
-
-
-@app.route("/api/tickets", methods=["POST"])
-def api_create():
-    payload = request.get_json(silent=True) or {}
-    subject = (payload.get("subject") or "").strip()
-    if not subject:
-        return jsonify({"error": "subject is required"}), 400
-
-    requester = db.query_one(
-        "SELECT id FROM users WHERE username = %s", (payload.get("requester"),))
-    if not requester:
-        requester = db.query_one(
-            "SELECT id FROM users WHERE role = 'requester' ORDER BY RAND() LIMIT 1")
-    if not requester:
-        return jsonify({"error": "no users exist; run the seeder first"}), 409
-
-    ref = _next_ref()
-    db.execute(
-        "INSERT INTO tickets (ref, subject, body, category, status, priority, "
-        "requester_id, created_at, updated_at) "
-        "VALUES (%s, %s, %s, %s, 'new', %s, %s, %s, %s)",
-        (ref, subject[:200], (payload.get("body") or "")[:4000],
-         (payload.get("category") or "general")[:32],
-         payload.get("priority") if payload.get("priority") in PRIORITIES else "P3",
-         requester["id"], dt.datetime.now(), dt.datetime.now()))
-    return jsonify({"ref": ref, "status": "new"}), 201
+    The middleware already composed a precise message ("OperationalError:
+    (2003, Can't connect to MySQL server on ...")). Surfacing that beats
+    inventing a vaguer one here, and it keeps the error page's text identical
+    to what it said before the tiers were split.
+    """
+    body = resp.json()
+    database = body.get("database") or {}
+    return database.get("error") or body.get("error") or \
+        "middleware returned HTTP %s" % resp.status
 
 
-@app.route("/api/tickets/<ref>/comments", methods=["POST"])
-def api_comment(ref):
-    payload = request.get_json(silent=True) or {}
-    body = (payload.get("body") or "").strip()
-    if not body:
-        return jsonify({"error": "body is required"}), 400
+# --- pass-through API --------------------------------------------------------
 
-    ticket = db.query_one("SELECT id, status FROM tickets WHERE ref = %s", (ref,))
-    if not ticket:
-        return jsonify({"error": "no such ticket"}), 404
-    author = db.query_one(
-        "SELECT id FROM users WHERE username = %s", (payload.get("author"),)) \
-        or db.query_one("SELECT id FROM users ORDER BY RAND() LIMIT 1")
+@app.route("/api/<path:subpath>", methods=PROXY_METHODS)
+def api_proxy(subpath):
+    """Forward /api/* to the middleware verbatim, both ways.
 
-    db.execute("INSERT INTO comments (ticket_id, author_id, body, is_internal) "
-               "VALUES (%s, %s, %s, %s)",
-               (ticket["id"], author["id"], body[:4000],
-                1 if payload.get("internal") else 0))
-    # A comment on an untriaged ticket moves it into the queue, which is what
-    # gives the generator a way to change state without a separate endpoint.
-    if ticket["status"] == "new":
-        db.execute("UPDATE tickets SET status = 'open' WHERE id = %s", (ticket["id"],))
-    return jsonify({"ref": ref, "commented": True}), 201
+    Query string and JSON body go up unmodified; status code, content type and
+    body come back unmodified. Nothing in here inspects the payload, which is
+    precisely why the API contract cannot drift between the tiers.
+    """
+    upstream = client.call(
+        request.method, "/api/" + subpath,
+        query=request.query_string.decode("utf-8") or None,
+        body=request.get_json(silent=True) if request.method == "POST" else None)
+    return Response(upstream.body, status=upstream.status,
+                    content_type=upstream.content_type)
 
 
 @app.route("/stats")
-def stats():
-    return jsonify(_stats())
+def stats_proxy():
+    upstream = client.get("/stats")
+    return Response(upstream.body, status=upstream.status,
+                    content_type=upstream.content_type)
 
+
+# --- health ------------------------------------------------------------------
 
 @app.route("/health")
 def health():
-    """200 when the database answers, 503 when it does not.
+    """200 only when this tier, the middleware AND the database are all good.
 
-    Same contract as the ZMS microservices app: the body always carries a
-    'database' object so a monitor can tell "app down" from "database down".
+    The middleware's 'database' object is nested verbatim so that checks
+    written against the single-tier app — servicedesk-verify.yml asserts
+    json.database.reachable and json.database.tickets — keep passing without
+    modification. The added 'middleware' object is what tells you which leg
+    broke when it does not.
     """
-    ok, detail = db.health()
-    return jsonify({"service": "servicedesk", "status": "ok" if ok else "degraded",
-                    "database": detail}), (200 if ok else 503)
+    reachable, status, payload = client.health()
+
+    if not reachable:
+        body = _degraded_payload(
+            "middleware unreachable at %s — %s" % (
+                config.MIDDLEWARE_URL or "<unset SD_MIDDLEWARE_URL>",
+                payload.get("error", "no answer")), "middleware")
+        return jsonify(body), 503
+
+    database = payload.get("database") or {
+        "reachable": False, "database": config.DB_NAME,
+        "error": "middleware answered HTTP %s without a database object" % status}
+    ok = status == 200 and bool(database.get("reachable"))
+    return jsonify({
+        "service": "servicedesk", "tier": "web",
+        "status": "ok" if ok else "degraded",
+        "middleware": {"url": config.MIDDLEWARE_URL, "reachable": True,
+                       "status": status},
+        "database": database,
+    }), (200 if ok else 503)

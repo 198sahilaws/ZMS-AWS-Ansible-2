@@ -44,6 +44,10 @@
   .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px;
            border:1px solid var(--line); color:var(--muted); }
   .muted { color:var(--muted); }
+  .sla { font-size:12px; font-weight:600; }
+  .sla.breached { color:var(--p1); }
+  .sla.at_risk  { color:var(--p2); }
+  .sla.on_track { color:var(--muted); font-weight:400; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px;
           padding:16px 18px; margin-bottom:12px; }
   .comment { border-left:3px solid var(--line); padding:2px 0 2px 14px; margin:14px 0; }
@@ -55,6 +59,8 @@
 <body>
 <header><h1><a href="{{ url_for('index') }}">{{ app_name }}</a></h1></header>
 <main>{% block content %}{% endblock %}</main>
-<footer>ZMS AWS Lab · web host talks to the MySQL host over the network on every request</footer>
+<footer>ZMS AWS Lab · three tiers, three hosts · this page came from the web host,
+its data from the middleware host over HTTP, and that from the MySQL host — a
+fresh connection on every request</footer>
 </body>
 </html>

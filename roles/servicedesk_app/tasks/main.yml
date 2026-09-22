@@ -1,10 +1,32 @@
 ---
-# Deploy the service desk web application onto the web host.
+# Deploy one tier of the service desk. sd_tier selects which.
 #
-# Order matters: interpreter -> user/dirs -> payload -> venv -> config ->
-# schema -> seed -> service -> firewall -> health. The schema and seed run from
-# HERE rather than from the database role because this is where the venv,
-# PyMySQL and schema.sql exist.
+# Order matters: resolve peers -> interpreter -> user/dirs -> payload -> venv ->
+# config -> schema -> service -> firewall -> health. The schema and seed run on
+# the MIDDLEWARE tier, because that is where the venv, PyMySQL, schema.sql and
+# the credentials are; before the split they ran here on the web host, which is
+# exactly the coupling this change removes.
+#
+# Everything below is shared by both tiers except the two peer-resolution
+# blocks and the schema include. If you find yourself adding a third
+# `when: sd_tier == ...`, consider whether the difference belongs in
+# sd_env_middleware / sd_env_web instead.
+
+- name: Assert sd_tier is one this role knows how to deploy
+  ansible.builtin.assert:
+    # Block sequence, not `that: [sd_tier in ['middleware', 'web']]`. A YAML flow
+    # sequence cannot hold a plain scalar followed by a nested `[`, so that form
+    # is a PARSE error -- the role fails to load at all and neither play runs.
+    that:
+      - sd_tier in ['middleware', 'web']
+    fail_msg: >-
+      sd_tier={{ sd_tier | default('<unset>') }} is not 'middleware' or 'web'.
+      It is set per-play in playbooks/servicedesk-middleware.yml and
+      playbooks/servicedesk-web.yml; a role invoked without it would install a
+      payload that sdapp/wsgi.py then refuses to start.
+    quiet: true
+
+# --- resolve the tier below this one -----------------------------------------
 
 - name: Resolve the database host from the inventory
   ansible.builtin.set_fact:
@@ -12,6 +34,7 @@
       {{ (groups[sd_db_group] | default([]))
          | intersect(groups[sd_db_distro_group] | default([]))
          | first | default('', true) }}
+  when: sd_tier == 'middleware'
 
 - name: Fail with an actionable message when no database host was discovered
   ansible.builtin.fail:
@@ -20,7 +43,33 @@
       service desk has nowhere to store data. Deploy an Ubuntu host with
       Role=db (deployments/web-app does this), or repoint sd_db_group /
       sd_db_distro_group in vars/servicedesk.yml.
-  when: sd_db_host | length == 0
+  when:
+    - sd_tier == 'middleware'
+    - sd_db_host | length == 0
+
+- name: Resolve the middleware host from the inventory
+  ansible.builtin.set_fact:
+    sd_middleware_host: >-
+      {{ (groups[sd_middleware_group] | default([]))
+         | intersect(groups[sd_middleware_distro_group] | default([]))
+         | first | default('', true) }}
+  when: sd_tier == 'web'
+
+- name: Fail with an actionable message when no middleware host was discovered
+  ansible.builtin.fail:
+    msg: >-
+      No host is in both {{ sd_middleware_group }} and
+      {{ sd_middleware_distro_group }}, so the web tier has nothing to render.
+      The group comes from the EC2 tag Role=middleware — check that
+      ubuntu_server_roles in the Terraform deployment includes "middleware"
+      and that `ansible-inventory --graph` shows {{ sd_middleware_group }}.
+      Note the tag value is lowercase and the group name is derived from it
+      verbatim; Role=Middleware produces role_Middleware and will not match.
+  when:
+    - sd_tier == 'web'
+    - sd_middleware_host | length == 0
+
+# --- install -----------------------------------------------------------------
 
 - name: Install Python and venv support
   ansible.builtin.include_tasks: python.yml
@@ -59,6 +108,10 @@
       mode: "0755"
       owner: "{{ sd_app_user }}"
 
+# The SAME payload on both tiers, including sdapp/api.py on the web host and
+# sdapp/web.py on the middleware host. Shipping only the half a tier uses would
+# save nothing and would make "flip SD_TIER and restart" stop working, which is
+# the exercise this layout exists to enable.
 - name: Deploy the application payload
   ansible.builtin.copy:
     src: app/
@@ -83,13 +136,16 @@
     dest: "{{ sd_app_config_dir }}/servicedesk.env"
     owner: root
     group: "{{ sd_app_group_name }}"
-    # 0640: it carries the database password, and the service user must read it.
+    # 0640: on the middleware tier it carries the database password, and the
+    # service user must read it. The web tier's copy has no secret in it but
+    # keeps the same mode so the two hosts do not differ for no reason.
     mode: "0640"
   no_log: true
   notify: restart servicedesk
 
 - name: Create the schema and seed it
   ansible.builtin.include_tasks: schema.yml
+  when: sd_tier == 'middleware'
 
 - name: Install the systemd unit
   ansible.builtin.template:
@@ -120,7 +176,7 @@
 
 - name: Open the application port in firewalld
   ansible.posix.firewalld:
-    port: "{{ sd_app_port }}/tcp"
+    port: "{{ sd_listen_port }}/tcp"
     permanent: true
     immediate: true
     state: enabled
@@ -128,22 +184,33 @@
 
 - name: Wait for the application to answer on /health
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ sd_app_port }}/health"
+    url: "http://127.0.0.1:{{ sd_listen_port }}/health"
     return_content: true
-    # 503 is a VALID answer here: it means the app is up and telling us the
-    # database is not. Failing on it would turn a diagnosable state into an
-    # opaque converge failure.
+    # 503 is a VALID answer here: it means this tier is up and telling us the
+    # tier below it is not. Failing on it would turn a diagnosable state into
+    # an opaque converge failure. On the web tier there are now two ways to
+    # get a 503 — database down, or middleware down — and the body says which;
+    # the debug task below prints both legs for exactly that reason.
     status_code: [200, 503]
   register: sd_health
   until: sd_health.status in [200, 503]
   retries: "{{ sd_app_health_retries }}"
   delay: "{{ sd_app_health_delay }}"
 
-- name: Report the deployed application
+- name: Report the deployed tier
   ansible.builtin.debug:
     msg: >-
-      service desk on {{ inventory_hostname }}:{{ sd_app_port }} is
+      servicedesk {{ sd_tier }} tier on
+      {{ inventory_hostname }}:{{ sd_listen_port }} is
       {{ sd_health.json.status | default('unknown') }};
+      {% if sd_tier == 'middleware' %}
       database {{ sd_db_host }}/{{ sd_db_name }} reachable=
       {{ sd_health.json.database.reachable | default('unknown') }},
       tickets={{ sd_health.json.database.tickets | default('n/a') }}
+      {% else %}
+      middleware {{ sd_middleware_host }}:{{ sd_middleware_port }} reachable=
+      {{ sd_health.json.middleware.reachable | default(false) }},
+      database reachable=
+      {{ sd_health.json.database.reachable | default('unknown') }},
+      tickets={{ sd_health.json.database.tickets | default('n/a') }}
+      {% endif %}

@@ -77,11 +77,19 @@
 - import_playbook: playbooks/zms-app-frontend.yml
 
 # --- 2c. Service desk (Flask + MySQL, deployments/web-app) -------------------
-# db -> app -> client. No-ops with "no hosts matched" on an estate without an
-# Ubuntu role_web/role_db/role_client trio.
-- import_playbook: playbooks/servicedesk-db.yml      # role_db     & distro_ubuntu
-- import_playbook: playbooks/servicedesk-app.yml     # role_web    & distro_ubuntu
-- import_playbook: playbooks/servicedesk-client.yml  # role_client & distro_ubuntu    # role_web & distro_sles (storefront)
+# db -> middleware -> web -> client. No-ops with "no hosts matched" on an estate
+# without an Ubuntu role_web/role_middleware/role_db/role_client quartet.
+#
+# NOT playbooks/servicedesk-app.yml — it is a compatibility alias that imports
+# the two plays below, and importing it here as well would run them twice.
+#
+# These four must stay in step with the LINUX_PLAYS array in
+# scripts/converge.sh, which is what the ansible-estate timer actually runs.
+# Adding a play here alone means it never runs on a schedule.
+- import_playbook: playbooks/servicedesk-db.yml         # role_db         & distro_ubuntu
+- import_playbook: playbooks/servicedesk-middleware.yml # role_middleware & distro_ubuntu
+- import_playbook: playbooks/servicedesk-web.yml        # role_web        & distro_ubuntu
+- import_playbook: playbooks/servicedesk-client.yml     # role_client     & distro_ubuntu
 
 # --- 3. Windows AD chain (forest -> members -> RODC -> services) -------------
 - import_playbook: playbooks/windows-adds.yml        # role_dc

@@ -18,14 +18,31 @@
 #
 # TOPOLOGY (deployments/web-app builds exactly this)
 #
-#   host                              role        what runs there
-#   --------------------------------  ----------  ----------------------------
-#   role_web    & distro_ubuntu       web         gunicorn on :8090 + the schema
-#   role_db     & distro_ubuntu       db          MySQL 8, schema `servicedesk`
-#   role_client & distro_ubuntu       client      sd-traffic timer (real HTTP)
+#   host                                role        what runs there
+#   ----------------------------------  ----------  --------------------------
+#   role_web        & distro_ubuntu     web         gunicorn :8090, HTML only
+#   role_middleware & distro_ubuntu     middleware  gunicorn :8091, all SQL
+#   role_db         & distro_ubuntu     db          MySQL 8, `servicedesk`
+#   role_client     & distro_ubuntu     client      sd-traffic timer (real HTTP)
 #
-# Every request crosses a host boundary: client -> web over HTTP, web -> db over
-# MySQL, on a fresh TCP connection each time. That is the point of the app.
+# Every request crosses TWO host boundaries now:
+#
+#   client --HTTP:8090--> web --HTTP:8091--> middleware --MySQL:3306--> db
+#
+# on a fresh TCP connection each time. That is the point of the app: three
+# hops, three hosts, three sets of flows, and a credential that exists on
+# exactly one of them.
+#
+# ONE ROLE SERVES TWO TIERS. roles/servicedesk_app installs the same payload on
+# the web and middleware hosts; sd_tier (set per-play, not here) picks which
+# Flask app runs. Same idea as roles/zms_microservice being deployed four times
+# with different ZMS_SERVICE values.
+#
+# PORT 8090 DID NOT MOVE. It is still the front door and still on the Role=web
+# host, so sd-traffic.py, servicedesk-verify.yml, the runbook and every
+# bookmarked URL are unchanged. The web tier forwards /api/* and /stats to the
+# middleware verbatim, so those responses are byte-identical to what the
+# single-tier app returned.
 #
 # NOTE ON MySQL vs MariaDB: the Ubuntu db host runs ORACLE MySQL
 # (playbooks/ubuntu-mysql.yml installs mysql-server), unlike the rest of the
@@ -38,6 +55,14 @@
 sd_app_group: role_web
 sd_app_distro_group: distro_ubuntu
 
+# role_middleware comes from the EC2 tag Role=middleware, which Terraform sets
+# from ubuntu_server_roles in deployments/web-app. The tag value is lowercase
+# and the group name is derived verbatim, so Role=Middleware would produce
+# role_Middleware and match nothing — see the tag/inventory contract in
+# inventory/aws_ec2.yml.
+sd_middleware_group: role_middleware
+sd_middleware_distro_group: distro_ubuntu
+
 sd_db_group: role_db
 sd_db_distro_group: distro_ubuntu
 
@@ -46,8 +71,19 @@ sd_client_distro_group: distro_ubuntu
 
 # --- Application -------------------------------------------------------------
 sd_app_port: 8090 # free: ZMS uses 8001-8003 and 8080, Apache uses 80
+# Deliberately a different port from 8090 even though it is a different host:
+# in a flow log the port alone then tells you which tier answered.
+sd_middleware_port: 8091
 sd_db_name: servicedesk
 sd_db_port: 3306
+
+# The two timeouts that decide WHICH TIER GETS BLAMED during a database outage.
+# sd_http_timeout must stay comfortably the larger: the web tier has to wait
+# long enough for the middleware to give up on MySQL and return its considered
+# 503. Invert them and the web tier times out first, reports the middleware as
+# unreachable, and the failure demo sends you to the wrong host.
+sd_http_timeout: 8.0 # web -> middleware, seconds
+sd_db_connect_timeout: 5 # middleware -> MySQL, seconds
 
 sd_app_root: /opt/servicedesk # code + virtualenv
 sd_app_config_dir: /etc/servicedesk # environment file
@@ -55,11 +91,20 @@ sd_app_log_dir: /var/log/servicedesk
 sd_app_user: sdapp
 sd_app_group_name: sdapp
 
-# Bump to force a redeploy of the payload on the next converge even if no file
-# changed — useful for proving the pipeline works.
-sd_app_version: "1.0.0"
+# Emitted as SD_APP_VERSION into /etc/servicedesk/servicedesk.env on BOTH tiers.
+# No Python module reads it; its two jobs are to make "which payload is on this
+# host" answerable with grep, and to give you a way to force a restart — bumping
+# it rewrites the env file, which notifies the restart handler on the next
+# converge. It does NOT re-copy the payload: the file copy is content-based, so
+# an unchanged tree stays unchanged no matter what this says.
+#
+# Keep in step with __version__ in roles/servicedesk_app/files/app/sdapp/__init__.py.
+sd_app_version: "2.0.0" # 2.x = three tiers; 1.x was the combined web+logic app
 
 # Two is plenty for a lab and keeps a t3.medium comfortable alongside Apache.
+# Applied to both tiers: the web tier's workers spend their time blocked on the
+# middleware rather than on MySQL, but the count that is right for one is right
+# for the other at this traffic level.
 sd_app_workers: 2
 
 # --- Seed data ---------------------------------------------------------------

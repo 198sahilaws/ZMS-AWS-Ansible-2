@@ -184,8 +184,9 @@
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }} is listening only on loopback
-      ({{ sd_db_listen.stdout_lines | default([]) | join(', ') }}). The web host
-      will not be able to connect, and every downstream symptom will look like a
+      ({{ sd_db_listen.stdout_lines | default([]) | join(', ') }}). The
+      middleware host will not be able to connect (it is the only tier that
+      tries), and every downstream symptom will look like a
       security group problem instead. {{ sd_db_confdir }}/{{ sd_db_dropin_name }}
       sets bind-address = 0.0.0.0, so check, in this order: that a LATER-SORTING
       file in {{ sd_db_confdir }} is not re-setting bind-address

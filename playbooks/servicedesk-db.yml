@@ -6,9 +6,10 @@
 #
 # Creates the `servicedesk` database, the application account and the server
 # drop-in (bind-address, skip-name-resolve). The TABLES are created by
-# servicedesk-app.yml, which has the venv and schema.sql.
+# servicedesk-middleware.yml, which has the venv and schema.sql.
 #
-# Run before servicedesk-app.yml.
+# Run before servicedesk-middleware.yml. The grant below is scoped to the
+# MIDDLEWARE host's /16, not the web host's — see sd_db_client_pattern.
 
 - name: Prepare the service desk database host
   # Role AND distro intersection — role_db spans every distro in the estate, so
@@ -46,12 +47,18 @@
     - name: Resolve the effective application password and client pattern
       ansible.builtin.set_fact:
         sd_db_password: "{{ sd_db_password_from_secret if sd_db_password_from_secret | length > 0 else sd_mysql_root_password }}"
-        # Grant the app account only from the app host's own /16. Derived from
-        # the discovered address rather than a hardcoded CIDR, so it is correct
-        # in every deployment (10.190/10.191/10.192) and survives an instance
-        # replacement inside the same VPC.
+        # Grant the app account only from the MIDDLEWARE host's own /16 —
+        # changed from the web host when the tiers were split, because the web
+        # host no longer connects to MySQL at all and granting it access would
+        # quietly re-open the path this design closes.
+        #
+        # Derived from the discovered address rather than a hardcoded CIDR, so
+        # it is correct in every deployment (10.190/10.191/10.192) and survives
+        # an instance replacement inside the same VPC. Still a /16 rather than
+        # a /32 for that same reason: a replaced instance keeps the subnet, not
+        # the address.
         sd_db_client_pattern: >-
-          {{ ((groups[sd_app_group] | default([])) | intersect(groups[sd_app_distro_group] | default([])) | first | default('10.0.0.0', true)).split('.')[0:2] | join('.') }}.%
+          {{ ((groups[sd_middleware_group] | default([])) | intersect(groups[sd_middleware_distro_group] | default([])) | first | default('10.0.0.0', true)).split('.')[0:2] | join('.') }}.%
       no_log: true
   roles:
     - servicedesk_db

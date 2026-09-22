@@ -13,6 +13,18 @@
     </div>
     {% endif %}
   {% endfor %}
+  {% if stats.open_by_sla and stats.open_by_sla.get('breached') %}
+  <div class="tile">
+    <div class="n P1">{{ stats.open_by_sla.get('breached') }}</div>
+    <div class="l">SLA breached</div>
+  </div>
+  {% endif %}
+  {% if stats.open_by_sla and stats.open_by_sla.get('at_risk') %}
+  <div class="tile">
+    <div class="n P2">{{ stats.open_by_sla.get('at_risk') }}</div>
+    <div class="l">SLA at risk</div>
+  </div>
+  {% endif %}
 </div>
 
 <nav class="filters">
@@ -37,7 +49,8 @@
 <table>
   <thead>
     <tr><th>Ref</th><th>Pri</th><th>Subject</th><th>Status</th>
-        <th>Requester</th><th>Assignee</th><th>Comments</th><th>Raised</th></tr>
+        <th>Requester</th><th>Assignee</th><th>Comments</th><th>Raised</th>
+        <th>SLA</th></tr>
   </thead>
   <tbody>
   {% for t in tickets %}
@@ -50,9 +63,18 @@
       <td class="{{ 'muted' if not t.assignee }}">{{ t.assignee or 'unassigned' }}</td>
       <td>{{ t.comment_count }}</td>
       <td class="muted">{{ t.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      {# SLA is computed by the middleware tier, never by SQL and never here. #}
+      <td class="sla {{ t.sla.state if t.sla else '' }}">
+        {%- if t.sla -%}
+          {{ t.sla.state.replace('_', ' ') }}
+          <span class="muted">({{ '%+.1f' | format(t.sla.remaining_hours) }}h)</span>
+        {%- else -%}
+          <span class="muted">—</span>
+        {%- endif -%}
+      </td>
     </tr>
   {% else %}
-    <tr><td colspan="8" class="muted">No tickets match this filter.</td></tr>
+    <tr><td colspan="9" class="muted">No tickets match this filter.</td></tr>
   {% endfor %}
   </tbody>
 </table>

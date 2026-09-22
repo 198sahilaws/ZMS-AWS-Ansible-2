@@ -71,18 +71,28 @@ LINUX_PLAYS=(
   playbooks/zms-app-db.yml
   playbooks/zms-app-services.yml
   playbooks/zms-app-frontend.yml
-  # --- Service desk (Flask + MySQL on the Ubuntu web/db pair) --------------
+  # --- Service desk (Flask + MySQL across the Ubuntu web/middleware/db trio) -
   # Must follow ubuntu-mysql.yml above: servicedesk-db.yml expects mysql.service
-  # to already exist on the host it prepares. db -> app -> client is the only
-  # valid order: the app creates its tables in the database the first play
-  # made, and the client sends traffic at the app.
+  # to already exist on the host it prepares. db -> middleware -> web -> client
+  # is the only valid order, and each step depends on the one before it:
+  #   db          creates the schema and the grant for the middleware host
+  #   middleware  creates the tables and seeds them; it holds the credentials
+  #   web         renders pages from the middleware over HTTP on :8091
+  #   client      sends traffic at the web tier on :8090
+  # Run web before middleware and its health check reports a 503 naming an
+  # unreachable middleware — correct, but a wasted converge.
   #
-  # All three are idempotent and fast on a converged estate: CREATE TABLE IF
+  # NOT servicedesk-app.yml. That file still exists as a compatibility alias
+  # that imports the middleware and web plays; listing it here as well would
+  # deploy both tiers twice on every converge.
+  #
+  # All four are idempotent and fast on a converged estate: CREATE TABLE IF
   # NOT EXISTS is a no-op, pip no-ops once the venv is built, and the seeder
   # exits without writing once tickets exist. To stop deploying the service
-  # desk on a schedule, delete these three lines; nothing else depends on them.
+  # desk on a schedule, delete these four lines; nothing else depends on them.
   playbooks/servicedesk-db.yml
-  playbooks/servicedesk-app.yml
+  playbooks/servicedesk-middleware.yml
+  playbooks/servicedesk-web.yml
   playbooks/servicedesk-client.yml
   # NOT playbooks/servicedesk-verify.yml -- it ends in asserts, so it would
   # mark the unit failed during a deliberate failure demo. Run it by hand.
