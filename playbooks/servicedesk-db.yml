@@ -25,10 +25,14 @@
     # the whole document would put the SSH private key and every other password
     # in scope for this play, where one -vvv leaks all of them.
     sd_mysql_root_password: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).mysql_root_password | default('', true) }}"
-    # Dedicated app password if Terraform ever adds one to the consolidated
-    # secret; otherwise the root password is reused for the scoped app account.
-    # The account is still NOT root: its grant is servicedesk.* only, so the
-    # blast radius is bounded by the grant rather than by the password.
+    # The dedicated app password. modules/secrets writes this key from
+    # var.servicedesk_db_password, so it exists in every estate built from this
+    # repo's Terraform — but it defaults to "" there, and an unset key resolves
+    # to '' here rather than erroring. Empty therefore means "operator did not
+    # set it", not "old estate", and we fall back to the root password with a
+    # warning below. The account is still NOT root even then (its grant is
+    # servicedesk.* only), but it can authenticate AS root, which is the part
+    # worth being noisy about.
     sd_db_password_from_secret: "{{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region) | from_json).servicedesk_db_password | default('', true) }}"
   pre_tasks:
     - name: Skip hosts that are not part of the Debian/RedHat/Suse families we handle
@@ -41,13 +45,18 @@
           - (sd_db_password_from_secret | length > 0) or (sd_mysql_root_password | length > 0)
         fail_msg: >-
           Neither servicedesk_db_password nor mysql_root_password is set in the
-          consolidated secret. Set var.mysql_root_password in terraform.tfvars
-          (deployments/web-app) and re-apply, then converge again.
+          consolidated secret. Set var.servicedesk_db_password (and
+          var.mysql_root_password) in terraform.tfvars (deployments/web-app or
+          deployments/multi-environment-ring-fencing) and re-apply, then
+          converge again.
       no_log: true
 
     - name: Resolve the effective application password and client pattern
       ansible.builtin.set_fact:
         sd_db_password: "{{ sd_db_password_from_secret if sd_db_password_from_secret | length > 0 else sd_mysql_root_password }}"
+        # A boolean, not a credential, so the warning task below can run outside
+        # no_log and actually be visible in the converge output.
+        sd_db_password_is_root: "{{ sd_db_password_from_secret | length == 0 }}"
         # Grant the app account only from the MIDDLEWARE host's own /24 —
         # changed from the web host when the tiers were split, because the web
         # host no longer connects to MySQL at all and granting it access would
@@ -77,6 +86,21 @@
               | first
               | default('10.0.0.0', true)).split('.')[0:3] | join('.') }}.%
       no_log: true
+
+    - name: Warn when the app account is being given the MySQL root password
+      # Loud on purpose, and a warning rather than a failure: the lab must still
+      # converge for an operator who has not set the new variable yet. But this
+      # is a real weakening — 'sdapp' keeps its servicedesk.*-only grant, so it
+      # cannot do more THROUGH that account, while anyone who reads
+      # /etc/servicedesk/servicedesk.env on the middleware host now holds a
+      # credential that also authenticates as root@localhost on the db host.
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: servicedesk_db_password is empty in the consolidated secret, so
+          '{{ sd_db_user }}' is being created with the MySQL ROOT password. Set
+          var.servicedesk_db_password in terraform.tfvars and re-apply to split
+          them. The role will rotate the account's password on the next converge.
+      when: sd_db_password_is_root | bool
 
     - name: Show which subnet the grant will admit
       # Deliberately outside the no_log above: the pattern is not a secret and

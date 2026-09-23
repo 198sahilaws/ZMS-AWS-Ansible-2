@@ -32,6 +32,10 @@
     zms_mysql_root_password: >-
       {{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region)
           | from_json).mysql_root_password | default('', true) }}
+    # MUST match the fallback order in zms-app-db.yml exactly — that play creates
+    # the account with whichever value it resolves, this one writes the same value
+    # into /etc/zms-app/<service>.env. See the longer note there about why this
+    # defaulting to the root password is a debt rather than a design.
     zms_app_db_password: "{{ zms_app_db_password_override | default(zms_mysql_root_password, true) }}"
   pre_tasks:
     - name: Skip non-Linux hosts

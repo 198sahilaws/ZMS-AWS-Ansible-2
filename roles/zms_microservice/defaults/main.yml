@@ -24,7 +24,11 @@ zms_service_spec: {}
 # variable. The DB-backed playbooks always override it.
 zms_app_db_password: ""
 zms_app_db_user: zmsapp
-zms_app_db_client_pattern: "10.188.%"
+
+# Ring scoping. Overridden by vars/zms-app.yml when a playbook loads it; these
+# defaults keep the role usable standalone and make the intersect a no-op.
+zms_ring_group: ""
+zms_ring_peers: "{{ groups['all'] | default([]) }}"
 
 zms_app_health_retries: 12
 zms_app_health_delay: 5

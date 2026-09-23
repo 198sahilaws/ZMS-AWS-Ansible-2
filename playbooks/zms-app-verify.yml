@@ -19,12 +19,25 @@
     - ../vars/zms-app.yml
   tasks:
     - name: Resolve every endpoint from the dynamic inventory
+      # Ring-scoped via zms_ring_peers, WITH A CAVEAT THIS PLAY CANNOT FIX BY
+      # ITSELF: it runs on localhost, and the control node carries no appenv_*
+      # group, so zms_ring_group resolves to '' and zms_ring_peers falls back to
+      # every host. In a single-copy estate that is exactly right. In an estate
+      # holding two or three copies of the topology it would verify a mixture of
+      # them, so name the ring explicitly:
+      #
+      #     ansible-playbook playbooks/zms-app-verify.yml -e zms_ring_group=appenv_prod
+      #
+      # -e outranks vars_files, and zms_ring_peers is derived from
+      # zms_ring_group at the point of use, so that one override scopes the
+      # whole play.
       ansible.builtin.set_fact:
         zms_targets: >-
           {{ zms_targets | default([]) + [{
                'name': item.key,
                'host': (groups[zms_app_web_group] | default([])
                         | intersect(groups[item.value.app_distro_group] | default([]))
+                        | intersect(zms_ring_peers)
                         | first | default('')),
                'port': item.value.port,
                'db': item.value.db_name | default('')
@@ -39,9 +52,19 @@
           - zms_targets | rejectattr('host', 'equalto', '') | list | length == zms_targets | length
         fail_msg: >-
           Unresolved endpoints: {{ zms_targets | selectattr('host', 'equalto', '')
-          | map(attribute='name') | join(', ') }}. Check `ansible-inventory --graph`
-          for the role_web and distro_* groups.
+          | map(attribute='name') | join(', ') }}
+          {{ ('within ring ' ~ zms_ring_group) if zms_ring_group | length > 0 else '' }}.
+          Check `ansible-inventory --graph` for the role_web and distro_* groups.
         quiet: true
+
+    - name: Say what is being verified
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'ring ' ~ zms_ring_group if zms_ring_group | length > 0 else 'single-copy estate' }}:
+          {{ item.name }} @ {{ item.host }}:{{ item.port }}
+      loop: "{{ zms_targets }}"
+      loop_control:
+        label: "{{ item.name }}"
 
     - name: Probe every health endpoint
       ansible.builtin.uri:

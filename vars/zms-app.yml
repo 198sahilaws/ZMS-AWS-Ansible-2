@@ -73,6 +73,38 @@ zms_app_frontend:
 zms_app_web_group: role_web
 zms_app_db_group: role_db
 
+# --- Staying inside one ring ---------------------------------------------------
+#
+# The same primitives as vars/servicedesk.yml, for the same reason and with the
+# same semantics — see the long explanation there.
+#
+# THE PROBLEM. Every peer lookup in this lab ends in `| first`. With one copy of
+# the topology that is unambiguous. An estate that tags instances with AppEnv
+# holds two or three copies, and `role_web | intersect(distro_rhel) | first`
+# then returns whichever orders host sorts first across ALL rings — so every
+# ring's storefront would fan out to the same one, across fences it is not
+# allowed to cross.
+#
+# THE FIX. Intersect before taking `first`:
+#
+#     groups[zms_app_db_group] | intersect(groups[spec.db_distro_group])
+#                              | intersect(zms_ring_peers) | first
+#
+# Evaluated lazily, per host, at the point of use — so group_names below is the
+# CURRENT host's group list, not the control node's.
+#
+# INERT EVERYWHERE ELSE. No deployment that can currently run this lab tags
+# AppEnv (multi-environment-ring-fencing is Ubuntu-only and therefore has no
+# host for most of the map), so zms_ring_group resolves to '' and zms_ring_peers
+# falls back to every host in the inventory, making the extra intersect a no-op.
+# It is here so that the day the two features meet, they meet correctly.
+#
+# ON LOCALHOST PLAYS. playbooks/zms-app-verify.yml runs on the control node,
+# whose group_names contain no appenv_* entry, so it cannot infer a ring. Point
+# it at one explicitly: `-e zms_ring_group=appenv_prod`.
+zms_ring_group: "{{ group_names | select('match', '^appenv_') | list | first | default('', true) }}"
+zms_ring_peers: "{{ groups[zms_ring_group] | default(groups['all'] | default([]), true) }}"
+
 # --- Deployment paths ------------------------------------------------------
 
 zms_app_root: /opt/zms-app          # code + virtualenv
@@ -93,10 +125,24 @@ zms_app_workers: 2
 
 zms_app_db_user: zmsapp
 
-# Which client addresses the MariaDB app account may connect from. The whole VPC
-# is 10.188.0.0/16 and the workload subnets are 10.188.1x.0/24, so '10.188.%'
-# covers every app host without pinning an IP that changes on replacement.
-zms_app_db_client_pattern: "10.188.%"
+# Which client addresses the MariaDB app account may connect from.
+#
+# EMPTY MEANS DERIVE, which is what you want. roles/zms_app_db works out, per
+# database host, the /24 of every app host that is actually mapped to a schema
+# on it, and creates one account per distinct /24. Nothing here is a CIDR, so
+# the lab is correct in every estate.
+#
+# This used to read "10.188.%" — the VPC the lab was first built in. That is a
+# hardcoded address in a file whose own header says nothing is hardcoded, and it
+# was already wrong: the live estate is 10.191.0.0/16 and the ring-fenced one is
+# 10.90.0.0/16. It stayed invisible only because no deployment that can run this
+# lab has been applied since the address changed, so the grant that would have
+# admitted nobody was never created.
+#
+# Set this to a literal pattern ONLY to force something wider while debugging —
+# e.g. -e zms_app_db_client_pattern='10.%' to rule the grant out as the cause of
+# an access-denied. It overrides the derivation on every database host at once.
+zms_app_db_client_pattern: ""
 
 # Fake-data volume. The catalog and inventory services BOTH generate their rows
 # from a fixed random seed and the same product-id range, which is how product

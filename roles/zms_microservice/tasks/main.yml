@@ -22,10 +22,15 @@
     zms_service_has_db: "{{ (zms_service_spec.db_distro_group | default('')) | length > 0 }}"
 
 - name: Resolve this service's database host from the dynamic inventory
+  # zms_ring_peers keeps this inside THIS app host's own ring — see the
+  # explanation in vars/zms-app.yml. Without it, an estate holding two copies of
+  # the topology would point every copy's service at whichever database host
+  # sorted first, across a fence the security groups will then drop.
   ansible.builtin.set_fact:
     zms_db_host: >-
       {{ (groups[zms_app_db_group] | default([])
-          | intersect(groups[zms_service_spec.db_distro_group] | default([])))
+          | intersect(groups[zms_service_spec.db_distro_group] | default([]))
+          | intersect(zms_ring_peers))
          | first | default('') }}
   when: zms_service_has_db | bool
 
@@ -34,8 +39,10 @@
     msg: >-
       {{ zms_service_name }} is mapped to a database on
       '{{ zms_service_spec.db_distro_group }}', but no host is in both
-      '{{ zms_app_db_group }}' and that group. Check the Role/Distro tags on the
-      instances, and that `ansible-inventory --graph` shows both groups.
+      '{{ zms_app_db_group }}' and that group
+      {{ ('within ring ' ~ zms_ring_group) if zms_ring_group | default('', true) | length > 0 else '' }}.
+      Check the Role/Distro tags on the instances, and that
+      `ansible-inventory --graph` shows both groups.
   when:
     - zms_service_has_db | bool
     - zms_db_host | length == 0
@@ -185,8 +192,12 @@
       zms-{{ zms_service_name }} is running on {{ inventory_hostname }} but
       cannot reach {{ zms_db_host }}:3306/{{ zms_service_spec.db_name }}.
       Run playbooks/zms-app-db.yml first, then check MariaDB's bind-address and
-      that the '{{ zms_app_db_user }}'@'{{ zms_app_db_client_pattern }}' grant
-      exists. Service said: {{ (zms_health.content | from_json).database.error
+      that a grant exists for this host's subnet — the account is
+      '{{ zms_app_db_user }}'@'{{ (ansible_facts['default_ipv4']['address']
+      | default(inventory_hostname)).split('.')[0:3] | join('.') }}.%', derived
+      from this host's own address, so `SELECT host FROM mysql.user WHERE
+      user='{{ zms_app_db_user }}';` on {{ zms_db_host }} must list it.
+      Service said: {{ (zms_health.content | from_json).database.error
       | default('no detail') }}
   when:
     - zms_service_has_db | bool

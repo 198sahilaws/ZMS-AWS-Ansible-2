@@ -220,7 +220,7 @@ In rough order of how often each one actually happens.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `/health` returns 503, `Can't connect to MySQL server` | MariaDB bound to `127.0.0.1` | `zms-app-db.yml` writes `/etc/my.cnf.d/99-zms-app.cnf` with `bind-address = 0.0.0.0`. Confirm with `ss -ltn \| grep 3306` — it must not say `127.0.0.1:3306`. |
-| 503, `Access denied for user 'zmsapp'@'10.188.x.y'` | Grant is for the wrong host pattern | The account is `'zmsapp'@'10.188.%'`. If your app host is outside `10.188.0.0/16`, widen `zms_app_db_client_pattern`. |
+| 503, `Access denied for user 'zmsapp'@'10.x.y.z'` | Grant is for the wrong host pattern | The account is `'zmsapp'@'<app host's /24>.%'`, derived at converge time from the app host that is actually mapped to the schema — there is no hardcoded CIDR. Run `SELECT host FROM mysql.user WHERE user='zmsapp';` on the db host and compare with the address in the error. If they differ, the app host moved subnet and `zms-app-db.yml` has not been re-run. To rule the grant out entirely, re-run with `-e zms_app_db_client_pattern='10.%'`. |
 | Connections take ~5 s then fail | Reverse DNS lookups on connect | `skip-name-resolve = 1` in the same drop-in. Re-run `zms-app-db.yml`. |
 | Service reachable locally, not from other hosts | `firewalld` (RHEL, SLES) | The role opens the port when firewalld is active. `firewall-cmd --list-ports` to confirm. Amazon Linux has no firewalld; Ubuntu's ufw is inactive. |
 | `No Python >= 3.8` on SLES | SLES 15 ships Python 3.6 as `python3` | The role installs `python311`. If the repo lacks it: `zypper install python311 python311-pip`, then converge. |

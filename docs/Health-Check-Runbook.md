@@ -592,25 +592,35 @@ sudo mysql -e "SELECT COUNT(*) FROM servicedesk.tickets;"
 ```
 
 The application account `sdapp` is granted **only from the MIDDLEWARE host's
-/16** (`sdapp`@`10.%`, derived at converge time from that host's own address),
-with `servicedesk.*:ALL` and nothing else. It therefore cannot connect over the
-local socket or as `localhost`. To test it the way the app does, connect over
-TCP to the host's own routable address:
+/24** (e.g. `sdapp`@`10.191.11.%`, derived at converge time from that host's own
+address — three octets, not two), with `servicedesk.*:ALL` and nothing else. It
+therefore cannot connect over the local socket or as `localhost`. To test it the
+way the app does, connect over TCP to the host's own routable address:
 
 ```bash
 mysql -h DB -u sdapp -p -e "SELECT COUNT(*) FROM servicedesk.tickets;"
 ```
 
 The grant moved from the web host to the middleware host when the tiers were
-split. It is still a /16 rather than a /32 because a replaced instance keeps its
-subnet but not its address — and in this estate both app hosts sit in the same
-/16 anyway, so the /16 is what makes the split a *credential* boundary rather
-than a network one. The web host cannot connect because it has no password, not
-because MySQL would refuse it.
+split, and from a /16 to a /24 when the ring-fenced deployment put prod, uat and
+dev inside one `10.90.0.0/16` — a /16 there would authorise dev's middleware
+against prod's database. It is a /24 rather than a /32 because a replaced
+instance keeps its subnet but not its address. The web host cannot connect
+because it has no password, not because MySQL would refuse it.
 
-The password is in the consolidated secret (`servicedesk_db_password`, falling
-back to `mysql_root_password`), and is present in
-`/etc/servicedesk/servicedesk.env` on the **middleware** host only.
+Narrowing the pattern does not edit the account — in MySQL the host pattern is
+part of the account identity, so a narrowing creates a *second* account and
+leaves the first live. `roles/servicedesk_db` therefore sweeps superseded
+`sdapp`@… rows after creating the current one; look for "Removing N superseded
+account(s)" in the converge log.
+
+The password is in the consolidated secret (`servicedesk_db_password`, written
+by Terraform from `var.servicedesk_db_password`), and is present in
+`/etc/servicedesk/servicedesk.env` on the **middleware** host only. If that
+variable was left empty, both Service Desk plays print a `WARNING:` line and
+fall back to `mysql_root_password` — meaning that file holds a credential which
+also authenticates as root on the db host. Grep the converge log for
+`servicedesk_db_password is empty` to check.
 
 ### Data checks
 

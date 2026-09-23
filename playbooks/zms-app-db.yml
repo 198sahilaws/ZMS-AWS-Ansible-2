@@ -31,10 +31,18 @@
       {{ (lookup('amazon.aws.aws_secret', ansible_secret_name, region=aws_region)
           | from_json).mysql_root_password | default('', true) }}
     # The application account's password. It defaults to the same value as the
-    # MariaDB root password because that is the only credential Terraform puts
-    # in the consolidated secret, and adding a field would mean a Terraform
-    # change. The ACCOUNT is still separate and still limited to one schema.
-    # To give it its own password without touching Terraform:
+    # MariaDB root password. The ACCOUNT is still separate and still limited to
+    # one schema, but the credential is not — anyone who reads
+    # /etc/zms-app/<service>.env on an app host holds the root password for that
+    # service's database host.
+    #
+    # THE PROPER FIX is a dedicated key in the consolidated secret, exactly as
+    # servicedesk_db_password now is: add the variable to
+    # ZMS-AWS-LAB-1/modules/secrets, thread it through modules/estate and the
+    # deployment, then read it here. It has not been done because no applied
+    # deployment runs this lab (it needs four distros). Do it before one does.
+    #
+    # To give the account its own password without touching Terraform:
     #   ansible-playbook playbooks/zms-app-db.yml -e zms_app_db_password_override='...'
     # and pass the same value to playbooks/zms-app-services.yml.
     zms_app_db_password: "{{ zms_app_db_password_override | default(zms_mysql_root_password, true) }}"

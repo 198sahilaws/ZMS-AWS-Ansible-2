@@ -276,10 +276,14 @@ the wrong host.
   Otherwise, when MySQL is down, the web tier times out before the middleware
   can answer and blames the middleware for the database's failure.
 - **The app password** comes from `servicedesk_db_password` in the consolidated
-  secret if present, otherwise falls back to `mysql_root_password`. The account
-  is still not root: its grant is `servicedesk.*` only, and now only from the
-  middleware host's /24 — which in a multi-ring estate is one ring's middleware
-  subnet rather than the whole VPC.
+  secret, written by Terraform from `var.servicedesk_db_password`. That variable
+  defaults to `""`, and an empty value falls back to `mysql_root_password` —
+  which both plays now warn about loudly, because it means
+  `/etc/servicedesk/servicedesk.env` on the middleware host holds a credential
+  that also authenticates as root on the db host. Set it. Even in the fallback
+  case the *account* is not root: its grant is `servicedesk.*` only, and only
+  from the middleware host's /24 — which in a multi-ring estate is one ring's
+  middleware subnet rather than the whole VPC.
 - **The db host runs Oracle MySQL**, not MariaDB, because `ubuntu-mysql.yml`
   installs `mysql-server`. The role probes for `mysql.service` then
   `mariadb.service` rather than mapping from the distro.

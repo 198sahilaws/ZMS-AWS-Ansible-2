@@ -13,7 +13,11 @@ port = {{ zms_app_db_port }}
 # THE SECOND MOST COMMON. Without this, every connection from an app host
 # triggers a reverse DNS lookup that has no answer in the VPC, so connects take
 # seconds and time out under any load. Grants must then be by IP pattern, which
-# is what '{{ zms_app_db_user }}'@'{{ zms_app_db_client_pattern }}' already is.
+# is what the '{{ zms_app_db_user }}'@'<subnet>.%' grants already are. The actual
+# patterns are derived per converge and deliberately NOT interpolated here: this
+# file notifies a MariaDB restart when it changes, and a comment that moves with
+# the app hosts' addresses would bounce the server for no reason. Run
+# `SELECT host FROM mysql.user WHERE user='{{ zms_app_db_user }}';` to see them.
 skip-name-resolve = 1
 
 # Four gunicorn workers opening a connection per request across three services
